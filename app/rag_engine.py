@@ -105,7 +105,9 @@ class RAGEngine:
                 "grounded": False,
                 "fallback_triggered": True,
                 "citations": [],
-                "model_used": self.model_name
+                "model_used": self.model_name,
+                "retrieval_count": 0,
+                "response_path": "no_chunks_retrieved"
             }
 
         # Check if API Key is available
@@ -172,7 +174,9 @@ class RAGEngine:
                     "grounded": not fallback_triggered,
                     "fallback_triggered": fallback_triggered,
                     "citations": structured_citations,
-                    "model_used": self.model_name
+                    "model_used": self.model_name,
+                    "retrieval_count": len(retrieved_chunks),
+                    "response_path": "llm_success"
                 }
 
             except Exception as e:
@@ -192,7 +196,10 @@ class RAGEngine:
             "grounded": False,
             "fallback_triggered": True,
             "citations": structured_citations,
-            "model_used": self.model_name
+            "model_used": self.model_name,
+            "retrieval_count": len(retrieved_chunks),
+            "response_path": "llm_all_retries_failed",
+            "error": str(last_exception)[:500] if last_exception else None
         }
 
 # Global singleton instance
