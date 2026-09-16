@@ -193,17 +193,30 @@ class RAGEngine:
                         backoff_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s for transient errors
                     time.sleep(backoff_delay)
 
-        # If all retry attempts failed, log error and return user-friendly fallback
+        # If all retry attempts failed, determine error type and return appropriate message
         logger.error(f"All {max_retries} Gemini API retry attempts failed: {last_exception}")
+        err_msg = str(last_exception) if last_exception else ""
+        is_rate_limited = "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg
+
+        if is_rate_limited:
+            answer_text = (
+                "⚠️ **Gemini API rate limit reached.** The free-tier quota for this API key has been temporarily exhausted.\n\n"
+                "Please wait a minute and try again, or upgrade your Gemini API plan for higher limits.\n\n"
+                "Your question was received and the relevant knowledge base context was found — "
+                "the AI just couldn't generate a response due to rate limiting."
+            )
+        else:
+            answer_text = settings.COMPLIANCE_FALLBACK
+
         return {
-            "answer": settings.COMPLIANCE_FALLBACK,
+            "answer": answer_text,
             "grounded": False,
-            "fallback_triggered": True,
+            "fallback_triggered": not is_rate_limited,
             "citations": structured_citations,
             "model_used": self.model_name,
             "retrieval_count": len(retrieved_chunks),
-            "response_path": "llm_all_retries_failed",
-            "error": str(last_exception)[:500] if last_exception else None
+            "response_path": "llm_rate_limited" if is_rate_limited else "llm_all_retries_failed",
+            "error": err_msg[:500] if err_msg else None
         }
 
 # Global singleton instance
