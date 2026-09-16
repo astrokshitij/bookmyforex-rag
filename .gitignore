@@ -1,0 +1,27 @@
+# Virtual environment
+venv/
+env/
+ENV/
+
+# ChromaDB vector database (re-indexed on startup)
+chroma_db/
+
+# Secrets & Environment variables
+.env
+.env.local
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+
+# OS generated
+.DS_Store
+Thumbs.db

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BookMyForex | Internal Support RAG Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <!-- Markdown parser -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- DOMPurify for sanitizing rendered HTML -->
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand-logo">
+        <span class="logo-icon">💱</span>
+        <div class="brand-text">
+          <span class="brand-title">BookMyForex</span>
+          <span class="brand-sub">Support & Compliance RAG Engine</span>
+        </div>
+      </div>
+      <span class="badge-internal">INTERNAL SUPPORT ONLY</span>
+    </div>
+
+    <div class="header-right">
+      <div id="statusIndicator" class="status-chip checking">
+        <span class="status-dot"></span>
+        <span id="statusText">Checking status...</span>
+      </div>
+
+      <button id="btnReindex" class="btn-secondary" title="Re-read workspace Markdown files and refresh vector index">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+        <span>Re-Index Docs</span>
+      </button>
+
+      <button id="btnDocsToggle" class="btn-secondary" title="View Indexed Knowledge Documents">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        <span>Knowledge Base</span>
+      </button>
+
+      <button id="btnSettings" class="btn-icon" title="Configure API Keys & Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="app-layout">
+    <!-- Chat Area -->
+    <main class="chat-container">
+      <div class="chat-banner">
+        <div class="banner-badge">🛡️ Strict Grounding & Guardrails Enabled</div>
+        <p class="banner-desc">Every response is strictly grounded against official BookMyForex policy documents with source citations. Inquiries lacking documented policy trigger immediate compliance escalation.</p>
+      </div>
+
+      <!-- Quick Action Pills -->
+      <div class="quick-prompts-bar">
+        <span class="quick-title">Quick Inquiries:</span>
+        <button class="pill" data-query="What is the cashback slab and promo code for Big Forex Sale?">💳 BIGFXSALE Cashback Slabs</button>
+        <button class="pill" data-query="A customer's card was swallowed in a foreign ATM. What is the emergency SOP?">🚨 ATM Swallowed Card SOP</button>
+        <button class="pill" data-query="Can an online FIR be submitted for an unauthorized transaction insurance claim?">🛡️ Insurance Claim FIR Rules</button>
+        <button class="pill" data-query="What is the difference between YES Bank Multi-Currency and Instarem Global USD card eligibility?">✈️ YES Bank vs Instarem</button>
+        <button class="pill" data-query="How long is a card blocked if a customer enters 3 incorrect PINs?">⚠️ 3 Wrong PIN Block</button>
+        <button class="pill" data-query="What are the education remittance promo codes and minimum transfer amounts?">🎓 Education Remittance Promo</button>
+      </div>
+
+      <!-- Messages Stream -->
+      <div id="messagesList" class="messages-list">
+        <div class="message assistant welcome">
+          <div class="msg-avatar">🤖</div>
+          <div class="msg-body">
+            <div class="msg-sender">BookMyForex Support Assistant</div>
+            <div class="msg-content">
+              Hello! I am your internal support assistant. You can ask me any question regarding BookMyForex campaigns, cashback slabs, fee structures, partner value-added perks, or emergency SOPs.
+              <br><br>
+              All answers are strictly verified against the internal knowledge base with source citations.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input Area -->
+      <div class="chat-input-wrapper">
+        <div class="input-toolbar">
+          <div class="filter-group">
+            <label for="docFilter">Filter Scope:</label>
+            <select id="docFilter">
+              <option value="">All Document Types</option>
+              <option value="campaign_offers_tcs">Campaigns & Offers (Offers.md)</option>
+              <option value="operational_sop">Operational SOPs & Disputes</option>
+              <option value="product_guide">Product Guides (YES Bank / Instarem)</option>
+              <option value="company_overview">Company Profile & History</option>
+            </select>
+          </div>
+          <span class="keyboard-hint">Press <strong>Enter</strong> to send, <strong>Shift+Enter</strong> for newline</span>
+        </div>
+
+        <form id="chatForm" class="chat-form">
+          <textarea
+            id="queryInput"
+            placeholder="Type your query (e.g., 'What is the required documentation for a 1.5 lakh insurance dispute?')..."
+            rows="2"
+            required
+          ></textarea>
+          <button type="submit" id="btnSubmit" class="btn-primary">
+            <span class="btn-text">Send</span>
+            <svg class="send-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </form>
+      </div>
+    </main>
+
+    <!-- Side Drawer: Knowledge Base Documents -->
+    <aside id="docsDrawer" class="docs-drawer hidden">
+      <div class="drawer-header">
+        <h3>Indexed Knowledge Base</h3>
+        <button id="btnCloseDrawer" class="btn-icon">✕</button>
+      </div>
+      <div id="docsList" class="drawer-content">
+        <div class="loading-spinner-small">Loading documents...</div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>⚙️ Configuration Settings</h3>
+        <button id="btnCloseSettings" class="btn-icon">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint">Provide your Google Gemini API key to enable live embeddings (<code>text-embedding-004</code>) and generation (<code>gemini-2.5-flash</code>).</p>
+        
+        <div class="form-group">
+          <label for="inputApiKey">Gemini API Key:</label>
+          <input type="password" id="inputApiKey" placeholder="AIzaSy..." />
+          <span class="subtext">Get your API key at <a href="https://aistudio.google.com/" target="_blank" rel="noopener">Google AI Studio</a>.</span>
+        </div>
+
+        <div id="settingsAlert" class="alert-msg hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnSaveSettings" class="btn-primary">Save Key</button>
+        <button id="btnCancelSettings" class="btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
