@@ -142,8 +142,8 @@ class RAGEngine:
             f"no relevant information: \"{settings.COMPLIANCE_FALLBACK}\""
         )
 
-        # 3. Call Gemini LLM with automatic exponential backoff retry (up to 3 attempts)
-        max_retries = 3
+        # 3. Call Gemini LLM with retry logic (handles 429 rate limits and transient errors)
+        max_retries = 4
         last_exception = None
 
         for attempt in range(1, max_retries + 1):
@@ -184,9 +184,13 @@ class RAGEngine:
                 err_str = str(e)
                 logger.warning(f"Gemini API attempt {attempt}/{max_retries} failed: {err_str}")
                 
-                # Check for 503 / 429 / rate limit / high demand errors and retry with exponential backoff
                 if attempt < max_retries:
-                    backoff_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s...
+                    # Use longer backoff for 429 rate limit errors (Gemini free tier)
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        backoff_delay = 15 * attempt  # 15s, 30s, 45s
+                        logger.info(f"Rate limited. Backing off {backoff_delay}s before retry...")
+                    else:
+                        backoff_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s for transient errors
                     time.sleep(backoff_delay)
 
         # If all retry attempts failed, log error and return user-friendly fallback
