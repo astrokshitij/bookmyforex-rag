@@ -60,7 +60,8 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
             if self._sdk_type == "google_genai":
                 response = self._genai_client.models.embed_content(
                     model=self.model_name,
-                    contents=text
+                    contents=text,
+                    config={"task_type": "RETRIEVAL_DOCUMENT"}
                 )
                 embeddings.append(response.embeddings[0].values)
             else:
@@ -87,7 +88,8 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
                     if self._sdk_type == "google_genai":
                         response = self._genai_client.models.embed_content(
                             model=self.model_name,
-                            contents=query
+                            contents=query,
+                            config={"task_type": "RETRIEVAL_QUERY"}
                         )
                         embeddings.append(response.embeddings[0].values)
                     else:
@@ -183,6 +185,8 @@ class VectorStoreManager:
     ) -> List[Dict[str, Any]]:
         """
         Retrieves top_k matching chunks with similarity scores and metadata.
+        Chunks below MIN_SIMILARITY_THRESHOLD are filtered out to prevent
+        low-quality context from triggering spurious compliance fallbacks.
         """
         results = self.collection.query(
             query_texts=[query_text],
@@ -200,6 +204,12 @@ class VectorStoreManager:
             for doc, meta, dist in zip(docs, metas, dists):
                 # Cosine distance to similarity: similarity = 1 - distance
                 similarity = max(0.0, 1.0 - dist)
+                if similarity < settings.MIN_SIMILARITY_THRESHOLD:
+                    logger.debug(
+                        f"Chunk filtered (similarity={similarity:.4f} < threshold={settings.MIN_SIMILARITY_THRESHOLD}): "
+                        f"{meta.get('source_file', '?')} | {meta.get('section_title', '?')}"
+                    )
+                    continue
                 retrieved.append({
                     "content": doc,
                     "metadata": meta,
@@ -207,6 +217,10 @@ class VectorStoreManager:
                     "similarity": round(similarity, 4)
                 })
 
+        logger.info(
+            f"Query retrieved {len(retrieved)} chunk(s) above similarity threshold "
+            f"{settings.MIN_SIMILARITY_THRESHOLD} for: '{query_text[:80]}'"
+        )
         return retrieved
 
     def get_stats(self) -> Dict[str, Any]:
