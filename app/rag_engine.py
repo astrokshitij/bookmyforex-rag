@@ -152,7 +152,7 @@ class RAGEngine:
                         contents=user_content,
                         config={
                             "system_instruction": formatted_sys_prompt,
-                            "temperature": 0.0
+                            "temperature": 0.2
                         }
                     )
                     answer = response.text.strip()
@@ -160,7 +160,7 @@ class RAGEngine:
                     model = self._llm_client.GenerativeModel(
                         model_name=self.model_name,
                         system_instruction=formatted_sys_prompt,
-                        generation_config={"temperature": 0.0}
+                        generation_config={"temperature": 0.2}
                     )
                     response = model.generate_content(user_content)
                     answer = response.text.strip()

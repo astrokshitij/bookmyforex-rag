@@ -16,7 +16,7 @@ except ImportError:
 
 class Settings:
     PROJECT_NAME: str = "BookMyForex Support RAG Assistant"
-    VERSION: str = "1.0.0"
+    VERSION: str = "1.1.0"
     
     # Paths
     BASE_DIR: Path = BASE_DIR
