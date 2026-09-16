@@ -1,3 +1,4 @@
+import time
 import logging
 from typing import List, Dict, Any, Optional
 from app.config import settings
@@ -15,7 +16,8 @@ STRICT GROUNDING & GUARDRAILS:
 Do not add pleasantries or partial guesses before or after this fallback sentence.
 3. Source File Citations: Every factual answer MUST cite the source file and section from which the facts were obtained (e.g., `[Offers.md: Section 3.A]` or `[gemini-code-1789542027610.md: Section 1]`).
 4. Operational Alerts: When applicable, explicitly highlight critical DOs and DON'Ts, eligibility caveats, deadline windows (e.g. 60-day claim / 30-day payout), and mandatory documentation (e.g. physical FIR requirement).
-5. Format: Use clean markdown with clear bullet points, bold key terms, and code blocks for promo codes. At the bottom of valid answers, include a "📚 Sources Cited" section listing the referenced documents and sections.
+5. Clean Output: NEVER output internal technical details, chunk IDs, similarity scores, match percentages, distance values, or database metadata in your response.
+6. Format: Use clean markdown with clear bullet points, bold key terms, and code blocks for promo codes. At the bottom of valid answers, include a "📚 Sources Cited" section listing the referenced documents and sections.
 """
 
 class RAGEngine:
@@ -61,7 +63,7 @@ class RAGEngine:
         Executes the RAG pipeline:
         1. Retrieval from Vector Store
         2. Strict Grounding Guardrail Prompting
-        3. Gemini generation with citations
+        3. Gemini generation with automatic retry & citations
         """
         k = top_k or settings.TOP_K
         filter_dict = {"document_type": filter_type} if filter_type else None
@@ -73,23 +75,20 @@ class RAGEngine:
             filter_metadata=filter_dict
         )
 
-        # Structure citations for UI
+        # Structure clean citations for UI
         structured_citations = []
         context_parts = []
 
         for item in retrieved_chunks:
             meta = item.get("metadata", {})
             content = item.get("content", "")
-            sim = item.get("similarity", 0.0)
 
-            # Build citation record
             structured_citations.append({
                 "source_file": meta.get("source_file", "Unknown"),
                 "document_title": meta.get("document_title", "Document"),
                 "document_type": meta.get("document_type", "kb"),
                 "section_title": meta.get("section_title", "General"),
                 "last_updated": meta.get("last_updated", ""),
-                "similarity_score": sim,
                 "snippet": content[:300] + "..." if len(content) > 300 else content
             })
 
@@ -111,7 +110,6 @@ class RAGEngine:
 
         # Check if API Key is available
         if not self.api_key or not self._llm_client:
-            # Fallback message indicating API key is required
             answer_text = (
                 f"⚠️ **Gemini API Key is not configured.**\n\n"
                 f"Please set `GEMINI_API_KEY` in your `.env` file or click the ⚙️ **Settings** button in the top bar to input your key.\n\n"
@@ -140,51 +138,60 @@ class RAGEngine:
             f"\"{settings.COMPLIANCE_FALLBACK}\""
         )
 
-        # 3. Call Gemini LLM
-        try:
-            if self._sdk_type == "google_genai":
-                response = self._llm_client.models.generate_content(
-                    model=self.model_name,
-                    contents=user_content,
-                    config={
-                        "system_instruction": formatted_sys_prompt,
-                        "temperature": 0.0  # Zero temperature for strictly deterministic factual retrieval
-                    }
-                )
-                answer = response.text.strip()
-            else:
-                model = self._llm_client.GenerativeModel(
-                    model_name=self.model_name,
-                    system_instruction=formatted_sys_prompt,
-                    generation_config={"temperature": 0.0}
-                )
-                response = model.generate_content(user_content)
-                answer = response.text.strip()
+        # 3. Call Gemini LLM with automatic exponential backoff retry (up to 3 attempts)
+        max_retries = 3
+        last_exception = None
 
-            fallback_triggered = (settings.COMPLIANCE_FALLBACK.lower() in answer.lower())
+        for attempt in range(1, max_retries + 1):
+            try:
+                if self._sdk_type == "google_genai":
+                    response = self._llm_client.models.generate_content(
+                        model=self.model_name,
+                        contents=user_content,
+                        config={
+                            "system_instruction": formatted_sys_prompt,
+                            "temperature": 0.0
+                        }
+                    )
+                    answer = response.text.strip()
+                else:
+                    model = self._llm_client.GenerativeModel(
+                        model_name=self.model_name,
+                        system_instruction=formatted_sys_prompt,
+                        generation_config={"temperature": 0.0}
+                    )
+                    response = model.generate_content(user_content)
+                    answer = response.text.strip()
 
-            return {
-                "answer": answer,
-                "grounded": not fallback_triggered,
-                "fallback_triggered": fallback_triggered,
-                "citations": structured_citations,
-                "model_used": self.model_name
-            }
+                fallback_triggered = (settings.COMPLIANCE_FALLBACK.lower() in answer.lower())
 
-        except Exception as e:
-            logger.error(f"Error calling Gemini LLM: {e}")
-            return {
-                "answer": (
-                    f"⚠️ An error occurred while generating the response: {str(e)}\n\n"
-                    f"If the question cannot be resolved, please adhere to company policy:\n\n"
-                    f"\"{settings.COMPLIANCE_FALLBACK}\""
-                ),
-                "grounded": False,
-                "fallback_triggered": True,
-                "citations": structured_citations,
-                "model_used": self.model_name,
-                "error": str(e)
-            }
+                return {
+                    "answer": answer,
+                    "grounded": not fallback_triggered,
+                    "fallback_triggered": fallback_triggered,
+                    "citations": structured_citations,
+                    "model_used": self.model_name
+                }
+
+            except Exception as e:
+                last_exception = e
+                err_str = str(e)
+                logger.warning(f"Gemini API attempt {attempt}/{max_retries} failed: {err_str}")
+                
+                # Check for 503 / 429 / rate limit / high demand errors and retry with exponential backoff
+                if attempt < max_retries:
+                    backoff_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s...
+                    time.sleep(backoff_delay)
+
+        # If all retry attempts failed, log error and return user-friendly fallback
+        logger.error(f"All {max_retries} Gemini API retry attempts failed: {last_exception}")
+        return {
+            "answer": settings.COMPLIANCE_FALLBACK,
+            "grounded": False,
+            "fallback_triggered": True,
+            "citations": structured_citations,
+            "model_used": self.model_name
+        }
 
 # Global singleton instance
 rag_engine = RAGEngine()

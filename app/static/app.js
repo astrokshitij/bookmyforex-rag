@@ -145,8 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const itemsHTML = data.citations.map(c => `
         <div class="citation-card">
           <div class="citation-header">
-            <span>📄 ${escapeHTML(c.source_file)} &rsaquo; ${escapeHTML(c.section_title)}</span>
-            <span class="citation-match">${Math.round((c.similarity_score || 0) * 100)}% Match</span>
+            <span>📄 ${escapeHTML(c.document_title || c.source_file)} &rsaquo; ${escapeHTML(c.section_title)}</span>
           </div>
           <div class="citation-snippet">${escapeHTML(c.snippet)}</div>
         </div>
@@ -155,7 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
       citationsHTML = `
         <div class="citations-box">
           <div class="citations-toggle" onclick="this.nextElementSibling.classList.toggle('hidden')">
-            <span>📚 Sources Consulted (${data.citations.length} sections)</span>
+            <span>📚 Official Guidelines Consulted</span>
             <span>▼</span>
           </div>
           <div class="citations-items hidden">
