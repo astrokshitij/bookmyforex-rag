@@ -44,7 +44,9 @@ class ChatRequest(BaseModel):
     document_type: Optional[str] = Field(default=None, description="Filter by document type")
 
 class SettingsRequest(BaseModel):
-    groq_api_keys: str = Field(..., min_length=5, description="Groq API Key(s), comma-separated for multiple")
+    groq_api_keys: Optional[str] = Field(default=None, description="Groq API Key(s), comma-separated for multiple")
+    groq_api_key: Optional[str] = Field(default=None, description="Single Groq API Key")
+    gemini_api_key: Optional[str] = Field(default=None, description="Gemini API Key for embeddings")
 
 @app.on_event("startup")
 async def startup_event():
@@ -163,45 +165,79 @@ async def health_check():
 
 @app.post("/api/settings")
 async def update_settings(req: SettingsRequest):
-    """Allows setting Groq API key(s) at runtime. Accepts comma-separated keys for round-robin."""
-    keys_csv = req.groq_api_keys.strip()
-    if not keys_csv:
-        raise HTTPException(status_code=400, detail="API key(s) cannot be empty.")
+    """Allows setting Groq API key(s) and/or Gemini API key at runtime."""
+    updated_items = []
     
-    rag_engine.reload_api_keys(keys_csv)
-    key_count = rag_engine.key_count
-    
-    # Save keys to .env so they persist across restarts
-    env_file = settings.BASE_DIR / ".env"
-    try:
-        lines = []
-        if env_file.exists():
-            with open(env_file, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+    # Handle Groq keys
+    groq_input = (req.groq_api_keys or req.groq_api_key or "").strip()
+    if groq_input:
+        rag_engine.reload_api_keys(groq_input)
+        updated_items.append(f"{rag_engine.key_count} Groq key(s)")
         
-        key_found = False
-        new_lines = []
-        for line in lines:
-            if line.startswith("GROQ_API_KEYS=") or line.startswith("GROQ_API_KEY="):
-                if not key_found:
-                    new_lines.append(f"GROQ_API_KEYS={keys_csv}\n")
-                    key_found = True
-                # Skip duplicate old entries
-            else:
-                new_lines.append(line)
-        if not key_found:
-            new_lines.append(f"\nGROQ_API_KEYS={keys_csv}\n")
-
-        with open(env_file, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
+        # Persist to .env
+        env_file = settings.BASE_DIR / ".env"
+        try:
+            lines = []
+            if env_file.exists():
+                with open(env_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
             
-    except Exception as e:
-        logger.warning(f"Could not persist keys to .env: {e}")
+            key_found = False
+            new_lines = []
+            for line in lines:
+                if line.startswith("GROQ_API_KEYS=") or line.startswith("GROQ_API_KEY="):
+                    if not key_found:
+                        new_lines.append(f"GROQ_API_KEYS={groq_input}\n")
+                        key_found = True
+                else:
+                    new_lines.append(line)
+            if not key_found:
+                new_lines.append(f"\nGROQ_API_KEYS={groq_input}\n")
+
+            with open(env_file, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+        except Exception as e:
+            logger.warning(f"Could not persist Groq keys to .env: {e}")
+
+    # Handle Gemini key for embeddings
+    gemini_input = (req.gemini_api_key or "").strip()
+    if gemini_input:
+        settings.GEMINI_API_KEY = gemini_input
+        vector_store.reload_api_key(gemini_input)
+        updated_items.append("Gemini embedding key")
+        
+        # Persist to .env
+        env_file = settings.BASE_DIR / ".env"
+        try:
+            lines = []
+            if env_file.exists():
+                with open(env_file, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+            
+            key_found = False
+            new_lines = []
+            for line in lines:
+                if line.startswith("GEMINI_API_KEY="):
+                    new_lines.append(f"GEMINI_API_KEY={gemini_input}\n")
+                    key_found = True
+                else:
+                    new_lines.append(line)
+            if not key_found:
+                new_lines.append(f"\nGEMINI_API_KEY={gemini_input}\n")
+
+            with open(env_file, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+        except Exception as e:
+            logger.warning(f"Could not persist Gemini key to .env: {e}")
+
+    if not updated_items:
+        raise HTTPException(status_code=400, detail="No valid API key provided to update.")
 
     return {
         "status": "success",
-        "message": f"Loaded {key_count} Groq API key(s) for round-robin rotation!",
-        "groq_keys_count": key_count
+        "message": f"Successfully updated: {', '.join(updated_items)}!",
+        "groq_keys_count": rag_engine.key_count,
+        "gemini_configured": bool(settings.GEMINI_API_KEY)
     }
 
 if __name__ == "__main__":
