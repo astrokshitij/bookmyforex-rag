@@ -44,7 +44,7 @@ class ChatRequest(BaseModel):
     document_type: Optional[str] = Field(default=None, description="Filter by document type")
 
 class SettingsRequest(BaseModel):
-    groq_api_key: str = Field(..., min_length=5, description="Groq API Key")
+    groq_api_keys: str = Field(..., min_length=5, description="Groq API Key(s), comma-separated for multiple")
 
 @app.on_event("startup")
 async def startup_event():
@@ -153,7 +153,7 @@ async def health_check():
         "status": "healthy",
         "app_name": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "groq_api_key_configured": bool(rag_engine.groq_api_key),
+        "groq_keys_configured": rag_engine.key_count,
         "gemini_embedding_key_configured": bool(settings.GEMINI_API_KEY),
         "embedding_model": settings.EMBEDDING_MODEL,
         "generation_model": settings.GENERATION_MODEL,
@@ -163,14 +163,15 @@ async def health_check():
 
 @app.post("/api/settings")
 async def update_settings(req: SettingsRequest):
-    """Allows setting the Groq API key at runtime from the UI."""
-    key = req.groq_api_key.strip()
-    if not key:
-        raise HTTPException(status_code=400, detail="API key cannot be empty.")
+    """Allows setting Groq API key(s) at runtime. Accepts comma-separated keys for round-robin."""
+    keys_csv = req.groq_api_keys.strip()
+    if not keys_csv:
+        raise HTTPException(status_code=400, detail="API key(s) cannot be empty.")
     
-    rag_engine.reload_api_key(key)
+    rag_engine.reload_api_keys(keys_csv)
+    key_count = rag_engine.key_count
     
-    # Save key to .env so it persists across restarts
+    # Save keys to .env so they persist across restarts
     env_file = settings.BASE_DIR / ".env"
     try:
         lines = []
@@ -181,24 +182,26 @@ async def update_settings(req: SettingsRequest):
         key_found = False
         new_lines = []
         for line in lines:
-            if line.startswith("GROQ_API_KEY="):
-                new_lines.append(f"GROQ_API_KEY={key}\n")
-                key_found = True
+            if line.startswith("GROQ_API_KEYS=") or line.startswith("GROQ_API_KEY="):
+                if not key_found:
+                    new_lines.append(f"GROQ_API_KEYS={keys_csv}\n")
+                    key_found = True
+                # Skip duplicate old entries
             else:
                 new_lines.append(line)
         if not key_found:
-            new_lines.append(f"\nGROQ_API_KEY={key}\n")
+            new_lines.append(f"\nGROQ_API_KEYS={keys_csv}\n")
 
         with open(env_file, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
             
     except Exception as e:
-        logger.warning(f"Could not persist key to .env: {e}")
+        logger.warning(f"Could not persist keys to .env: {e}")
 
     return {
         "status": "success",
-        "message": "Groq API key updated successfully!",
-        "has_groq_key": True
+        "message": f"Loaded {key_count} Groq API key(s) for round-robin rotation!",
+        "groq_keys_count": key_count
     }
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ except ImportError:
 
 class Settings:
     PROJECT_NAME: str = "BookMyForex Support RAG Assistant"
-    VERSION: str = "2.0.0"
+    VERSION: str = "2.1.0"
     
     # Paths
     BASE_DIR: Path = BASE_DIR
@@ -32,8 +32,9 @@ class Settings:
     # ChromaDB & Vector Store
     COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "bookmyforex_kb")
     
-    # Groq API (for LLM generation — fast inference, generous rate limits)
-    GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
+    # Groq API (for LLM generation — supports multiple comma-separated keys for round-robin)
+    GROQ_API_KEYS: str = os.getenv("GROQ_API_KEYS", "")  # Comma-separated keys
+    GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")  # Backward compat single key
     GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "openai/gpt-oss-120b")
 
     # Gemini API (for embeddings only — Groq doesn't offer embedding models)

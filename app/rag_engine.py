@@ -1,5 +1,6 @@
 import time
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 from app.config import settings
 from app.vector_store import vector_store
@@ -20,33 +21,85 @@ Do not add pleasantries or partial guesses before or after this fallback sentenc
 6. Format: Use clean markdown with clear bullet points, bold key terms, and code blocks for promo codes. At the bottom of valid answers, include a "📚 Sources Cited" section listing the referenced documents and sections.
 """
 
-class RAGEngine:
-    def __init__(self):
-        self.groq_api_key = settings.GROQ_API_KEY
-        self.model_name = settings.GENERATION_MODEL
-        self._llm_client = None
-        self._init_llm()
 
-    def _init_llm(self):
-        if not self.groq_api_key:
-            logger.warning("GROQ_API_KEY is not set. LLM generation will be unavailable.")
+class RAGEngine:
+    """
+    RAG Engine with multi-key round-robin Groq API support.
+    
+    Supports multiple Groq API keys for higher effective rate limits:
+    - Round-robin distributes requests evenly across keys
+    - On 429 rate limit, instantly fails over to the next key (zero wait)
+    - Only backs off if ALL keys are exhausted
+    """
+
+    def __init__(self):
+        self.model_name = settings.GENERATION_MODEL
+        self._api_keys: List[str] = []
+        self._clients: Dict[str, Any] = {}
+        self._key_index = 0
+        self._lock = threading.Lock()  # Thread-safe round-robin
+        self._load_keys()
+
+    def _load_keys(self):
+        """Load API keys from GROQ_API_KEYS (comma-separated) or single GROQ_API_KEY."""
+        keys = []
+
+        # Multi-key: GROQ_API_KEYS=key1,key2,key3
+        if settings.GROQ_API_KEYS:
+            keys = [k.strip() for k in settings.GROQ_API_KEYS.split(",") if k.strip()]
+
+        # Backward compat: single GROQ_API_KEY (add if not already in multi-key list)
+        if settings.GROQ_API_KEY and settings.GROQ_API_KEY not in keys:
+            keys.append(settings.GROQ_API_KEY)
+
+        self._api_keys = keys
+        self._init_clients()
+        logger.info(f"Loaded {len(self._api_keys)} Groq API key(s) for round-robin rotation.")
+
+    def _init_clients(self):
+        """Initialize a Groq client for each API key."""
+        self._clients = {}
+        if not self._api_keys:
             return
 
         try:
             from groq import Groq
-            self._llm_client = Groq(api_key=self.groq_api_key)
-            logger.info(f"Initialized Groq client for generation (model: {self.model_name}).")
+            for key in self._api_keys:
+                self._clients[key] = Groq(api_key=key)
+            logger.info(f"Initialized {len(self._clients)} Groq client(s) (model: {self.model_name}).")
         except ImportError:
             logger.error("Groq SDK not installed. Run: pip install groq")
-            self._llm_client = None
         except Exception as e:
-            logger.warning(f"Failed to initialize Groq client: {e}")
-            self._llm_client = None
+            logger.warning(f"Failed to initialize Groq clients: {e}")
 
-    def reload_api_key(self, groq_api_key: str):
-        """Updates LLM client with a new Groq API key."""
-        self.groq_api_key = groq_api_key
-        self._init_llm()
+    def _next_client(self):
+        """Thread-safe round-robin key selection. Returns (key_label, client)."""
+        if not self._api_keys:
+            return None, None
+        with self._lock:
+            idx = self._key_index % len(self._api_keys)
+            self._key_index += 1
+        key = self._api_keys[idx]
+        return f"key_{idx + 1}/{len(self._api_keys)}", self._clients.get(key)
+
+    def reload_api_keys(self, keys_csv: str):
+        """Updates Groq clients with new comma-separated API keys."""
+        self._api_keys = [k.strip() for k in keys_csv.split(",") if k.strip()]
+        self._key_index = 0
+        self._init_clients()
+
+    # Backward compat alias
+    def reload_api_key(self, key: str):
+        self.reload_api_keys(key)
+
+    @property
+    def groq_api_key(self):
+        """Backward compat: returns first key or None."""
+        return self._api_keys[0] if self._api_keys else None
+
+    @property
+    def key_count(self):
+        return len(self._api_keys)
 
     def generate_response(
         self,
@@ -58,7 +111,7 @@ class RAGEngine:
         Executes the RAG pipeline:
         1. Retrieval from ChromaDB Vector Store (Gemini embeddings)
         2. Strict Grounding Guardrail Prompting
-        3. Groq LLM generation with automatic retry & citations
+        3. Groq LLM generation with round-robin key rotation & failover
         """
         k = top_k or settings.TOP_K
         filter_dict = {"document_type": filter_type} if filter_type else None
@@ -105,16 +158,17 @@ class RAGEngine:
                 "response_path": "no_chunks_retrieved"
             }
 
-        # Check if Groq API Key is available
-        if not self.groq_api_key or not self._llm_client:
+        # Check if any Groq API keys are configured
+        if not self._api_keys or not self._clients:
             answer_text = (
                 f"⚠️ **Groq API Key is not configured.**\n\n"
-                f"Please set `GROQ_API_KEY` in your `.env` file or click the ⚙️ **Settings** button in the top bar to input your key.\n\n"
+                f"Please set `GROQ_API_KEY` or `GROQ_API_KEYS` in your `.env` file "
+                f"or click the ⚙️ **Settings** button to input your key(s).\n\n"
                 f"### Retrieved Context Preview from Vector Store:\n"
             )
             for c in structured_citations[:3]:
                 answer_text += f"\n- **{c['source_file']}** ({c['section_title']}):\n> {c['snippet']}\n"
-            
+
             return {
                 "answer": answer_text,
                 "grounded": True,
@@ -137,23 +191,34 @@ class RAGEngine:
             f"no relevant information: \"{settings.COMPLIANCE_FALLBACK}\""
         )
 
-        # 3. Call Groq LLM with retry logic
-        max_retries = 3
-        last_exception = None
+        messages = [
+            {"role": "system", "content": formatted_sys_prompt},
+            {"role": "user", "content": user_content}
+        ]
 
-        for attempt in range(1, max_retries + 1):
+        # 3. Round-robin Groq call with failover across all keys
+        #    On 429: instantly try next key (zero wait)
+        #    On other errors: retry same key with short backoff
+        #    Only fail after ALL keys exhausted + retry attempts
+
+        total_attempts = len(self._api_keys) * 2  # 2 full rotations max
+        last_exception = None
+        keys_exhausted = set()
+
+        for attempt in range(1, total_attempts + 1):
+            key_label, client = self._next_client()
+
+            if not client:
+                break
+
             try:
-                response = self._llm_client.chat.completions.create(
+                response = client.chat.completions.create(
                     model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": formatted_sys_prompt},
-                        {"role": "user", "content": user_content}
-                    ],
+                    messages=messages,
                     temperature=0.2,
                     max_tokens=2048
                 )
                 answer = response.choices[0].message.content.strip()
-
                 fallback_triggered = (settings.COMPLIANCE_FALLBACK.lower() in answer.lower())
 
                 return {
@@ -163,30 +228,40 @@ class RAGEngine:
                     "citations": structured_citations,
                     "model_used": self.model_name,
                     "retrieval_count": len(retrieved_chunks),
-                    "response_path": "llm_success"
+                    "response_path": "llm_success",
+                    "keys_available": len(self._api_keys)
                 }
 
             except Exception as e:
                 last_exception = e
                 err_str = str(e)
-                logger.warning(f"Groq API attempt {attempt}/{max_retries} failed: {err_str}")
-                
-                if attempt < max_retries:
-                    if "429" in err_str or "rate_limit" in err_str.lower():
-                        backoff_delay = 10 * attempt
-                        logger.info(f"Rate limited. Backing off {backoff_delay}s before retry...")
-                    else:
-                        backoff_delay = 2 ** (attempt - 1)
-                    time.sleep(backoff_delay)
+                is_rate_limit = "429" in err_str or "rate_limit" in err_str.lower()
 
-        # If all retry attempts failed
-        logger.error(f"All {max_retries} Groq API retry attempts failed: {last_exception}")
+                if is_rate_limit:
+                    # Rate limited — instantly try next key (zero delay)
+                    keys_exhausted.add(key_label)
+                    logger.info(f"Groq {key_label} rate-limited, rotating to next key... "
+                                f"({len(keys_exhausted)}/{len(self._api_keys)} exhausted)")
+
+                    if len(keys_exhausted) >= len(self._api_keys):
+                        # ALL keys exhausted — short backoff before second rotation
+                        logger.warning("All Groq keys rate-limited. Backing off 5s...")
+                        time.sleep(5)
+                        keys_exhausted.clear()
+                else:
+                    # Non-rate-limit error — short backoff and retry
+                    logger.warning(f"Groq {key_label} attempt {attempt} failed: {err_str}")
+                    time.sleep(1)
+
+        # All attempts exhausted
+        logger.error(f"All Groq API attempts failed ({total_attempts} tries): {last_exception}")
         err_msg = str(last_exception) if last_exception else ""
         is_rate_limited = "429" in err_msg or "rate_limit" in err_msg.lower()
 
         if is_rate_limited:
             answer_text = (
-                "⚠️ **Groq API rate limit reached.** Please wait a moment and try again.\n\n"
+                f"⚠️ **All {len(self._api_keys)} Groq API key(s) are rate-limited.** "
+                f"Please wait a moment and try again.\n\n"
                 "Your question was received and the relevant knowledge base context was found — "
                 "the AI just couldn't generate a response due to rate limiting."
             )
@@ -201,7 +276,8 @@ class RAGEngine:
             "model_used": self.model_name,
             "retrieval_count": len(retrieved_chunks),
             "response_path": "llm_rate_limited" if is_rate_limited else "llm_all_retries_failed",
-            "error": err_msg[:500] if err_msg else None
+            "error": err_msg[:500] if err_msg else None,
+            "keys_available": len(self._api_keys)
         }
 
 # Global singleton instance
