@@ -21,37 +21,32 @@ Do not add pleasantries or partial guesses before or after this fallback sentenc
 """
 
 class RAGEngine:
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.GEMINI_API_KEY
+    def __init__(self):
+        self.groq_api_key = settings.GROQ_API_KEY
         self.model_name = settings.GENERATION_MODEL
         self._llm_client = None
         self._init_llm()
 
     def _init_llm(self):
-        if not self.api_key:
+        if not self.groq_api_key:
+            logger.warning("GROQ_API_KEY is not set. LLM generation will be unavailable.")
             return
 
         try:
-            from google import genai
-            self._llm_client = genai.Client(api_key=self.api_key)
-            self._sdk_type = "google_genai"
-            logger.info("Initialized Google GenAI client for generation.")
-        except Exception:
-            try:
-                import google.generativeai as gai
-                gai.configure(api_key=self.api_key)
-                self._llm_client = gai
-                self._sdk_type = "google_generativeai"
-                logger.info("Initialized google.generativeai client for generation.")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Gemini generation client: {e}")
-                self._llm_client = None
+            from groq import Groq
+            self._llm_client = Groq(api_key=self.groq_api_key)
+            logger.info(f"Initialized Groq client for generation (model: {self.model_name}).")
+        except ImportError:
+            logger.error("Groq SDK not installed. Run: pip install groq")
+            self._llm_client = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize Groq client: {e}")
+            self._llm_client = None
 
-    def reload_api_key(self, api_key: str):
-        """Updates LLM client with a new API key."""
-        self.api_key = api_key
+    def reload_api_key(self, groq_api_key: str):
+        """Updates LLM client with a new Groq API key."""
+        self.groq_api_key = groq_api_key
         self._init_llm()
-        vector_store.reload_api_key(api_key)
 
     def generate_response(
         self,
@@ -61,9 +56,9 @@ class RAGEngine:
     ) -> Dict[str, Any]:
         """
         Executes the RAG pipeline:
-        1. Retrieval from Vector Store
+        1. Retrieval from ChromaDB Vector Store (Gemini embeddings)
         2. Strict Grounding Guardrail Prompting
-        3. Gemini generation with automatic retry & citations
+        3. Groq LLM generation with automatic retry & citations
         """
         k = top_k or settings.TOP_K
         filter_dict = {"document_type": filter_type} if filter_type else None
@@ -98,7 +93,7 @@ class RAGEngine:
 
         context_str = "\n".join(context_parts)
 
-        # If vector store is empty
+        # If vector store returned no relevant chunks
         if not retrieved_chunks:
             return {
                 "answer": settings.COMPLIANCE_FALLBACK,
@@ -110,11 +105,11 @@ class RAGEngine:
                 "response_path": "no_chunks_retrieved"
             }
 
-        # Check if API Key is available
-        if not self.api_key or not self._llm_client:
+        # Check if Groq API Key is available
+        if not self.groq_api_key or not self._llm_client:
             answer_text = (
-                f"⚠️ **Gemini API Key is not configured.**\n\n"
-                f"Please set `GEMINI_API_KEY` in your `.env` file or click the ⚙️ **Settings** button in the top bar to input your key.\n\n"
+                f"⚠️ **Groq API Key is not configured.**\n\n"
+                f"Please set `GROQ_API_KEY` in your `.env` file or click the ⚙️ **Settings** button in the top bar to input your key.\n\n"
                 f"### Retrieved Context Preview from Vector Store:\n"
             )
             for c in structured_citations[:3]:
@@ -142,30 +137,22 @@ class RAGEngine:
             f"no relevant information: \"{settings.COMPLIANCE_FALLBACK}\""
         )
 
-        # 3. Call Gemini LLM with retry logic (handles 429 rate limits and transient errors)
-        max_retries = 4
+        # 3. Call Groq LLM with retry logic
+        max_retries = 3
         last_exception = None
 
         for attempt in range(1, max_retries + 1):
             try:
-                if self._sdk_type == "google_genai":
-                    response = self._llm_client.models.generate_content(
-                        model=self.model_name,
-                        contents=user_content,
-                        config={
-                            "system_instruction": formatted_sys_prompt,
-                            "temperature": 0.2
-                        }
-                    )
-                    answer = response.text.strip()
-                else:
-                    model = self._llm_client.GenerativeModel(
-                        model_name=self.model_name,
-                        system_instruction=formatted_sys_prompt,
-                        generation_config={"temperature": 0.2}
-                    )
-                    response = model.generate_content(user_content)
-                    answer = response.text.strip()
+                response = self._llm_client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": formatted_sys_prompt},
+                        {"role": "user", "content": user_content}
+                    ],
+                    temperature=0.2,
+                    max_tokens=2048
+                )
+                answer = response.choices[0].message.content.strip()
 
                 fallback_triggered = (settings.COMPLIANCE_FALLBACK.lower() in answer.lower())
 
@@ -182,26 +169,24 @@ class RAGEngine:
             except Exception as e:
                 last_exception = e
                 err_str = str(e)
-                logger.warning(f"Gemini API attempt {attempt}/{max_retries} failed: {err_str}")
+                logger.warning(f"Groq API attempt {attempt}/{max_retries} failed: {err_str}")
                 
                 if attempt < max_retries:
-                    # Use longer backoff for 429 rate limit errors (Gemini free tier)
-                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                        backoff_delay = 15 * attempt  # 15s, 30s, 45s
+                    if "429" in err_str or "rate_limit" in err_str.lower():
+                        backoff_delay = 10 * attempt
                         logger.info(f"Rate limited. Backing off {backoff_delay}s before retry...")
                     else:
-                        backoff_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s for transient errors
+                        backoff_delay = 2 ** (attempt - 1)
                     time.sleep(backoff_delay)
 
-        # If all retry attempts failed, determine error type and return appropriate message
-        logger.error(f"All {max_retries} Gemini API retry attempts failed: {last_exception}")
+        # If all retry attempts failed
+        logger.error(f"All {max_retries} Groq API retry attempts failed: {last_exception}")
         err_msg = str(last_exception) if last_exception else ""
-        is_rate_limited = "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg
+        is_rate_limited = "429" in err_msg or "rate_limit" in err_msg.lower()
 
         if is_rate_limited:
             answer_text = (
-                "⚠️ **Gemini API rate limit reached.** The free-tier quota for this API key has been temporarily exhausted.\n\n"
-                "Please wait a minute and try again, or upgrade your Gemini API plan for higher limits.\n\n"
+                "⚠️ **Groq API rate limit reached.** Please wait a moment and try again.\n\n"
                 "Your question was received and the relevant knowledge base context was found — "
                 "the AI just couldn't generate a response due to rate limiting."
             )

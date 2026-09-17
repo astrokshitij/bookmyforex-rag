@@ -44,7 +44,7 @@ class ChatRequest(BaseModel):
     document_type: Optional[str] = Field(default=None, description="Filter by document type")
 
 class SettingsRequest(BaseModel):
-    gemini_api_key: str = Field(..., min_length=5, description="Gemini API Key")
+    groq_api_key: str = Field(..., min_length=5, description="Groq API Key")
 
 @app.on_event("startup")
 async def startup_event():
@@ -153,16 +153,18 @@ async def health_check():
         "status": "healthy",
         "app_name": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "gemini_api_key_configured": bool(rag_engine.api_key),
+        "groq_api_key_configured": bool(rag_engine.groq_api_key),
+        "gemini_embedding_key_configured": bool(settings.GEMINI_API_KEY),
         "embedding_model": settings.EMBEDDING_MODEL,
         "generation_model": settings.GENERATION_MODEL,
+        "llm_provider": "groq",
         "vector_store": stats
     }
 
 @app.post("/api/settings")
 async def update_settings(req: SettingsRequest):
-    """Allows setting the Gemini API key at runtime from the UI."""
-    key = req.gemini_api_key.strip()
+    """Allows setting the Groq API key at runtime from the UI."""
+    key = req.groq_api_key.strip()
     if not key:
         raise HTTPException(status_code=400, detail="API key cannot be empty.")
     
@@ -179,13 +181,13 @@ async def update_settings(req: SettingsRequest):
         key_found = False
         new_lines = []
         for line in lines:
-            if line.startswith("GEMINI_API_KEY="):
-                new_lines.append(f"GEMINI_API_KEY={key}\n")
+            if line.startswith("GROQ_API_KEY="):
+                new_lines.append(f"GROQ_API_KEY={key}\n")
                 key_found = True
             else:
                 new_lines.append(line)
         if not key_found:
-            new_lines.append(f"\nGEMINI_API_KEY={key}\n")
+            new_lines.append(f"\nGROQ_API_KEY={key}\n")
 
         with open(env_file, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
@@ -195,8 +197,8 @@ async def update_settings(req: SettingsRequest):
 
     return {
         "status": "success",
-        "message": "Gemini API key updated successfully!",
-        "has_gemini_key": True
+        "message": "Groq API key updated successfully!",
+        "has_groq_key": True
     }
 
 if __name__ == "__main__":

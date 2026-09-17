@@ -16,7 +16,7 @@ except ImportError:
 
 class Settings:
     PROJECT_NAME: str = "BookMyForex Support RAG Assistant"
-    VERSION: str = "1.1.0"
+    VERSION: str = "2.0.0"
     
     # Paths
     BASE_DIR: Path = BASE_DIR
@@ -32,10 +32,13 @@ class Settings:
     # ChromaDB & Vector Store
     COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "bookmyforex_kb")
     
-    # Gemini Models
+    # Groq API (for LLM generation — fast inference, generous rate limits)
+    GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
+    GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "llama-3.3-70b-versatile")
+
+    # Gemini API (for embeddings only — Groq doesn't offer embedding models)
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-2")
-    GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "models/gemini-3.6-flash")
     
     # RAG parameters
     TOP_K: int = int(os.getenv("TOP_K", "5"))

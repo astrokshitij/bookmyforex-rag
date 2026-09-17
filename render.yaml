@@ -6,10 +6,12 @@ services:
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     envVars:
-      - key: GEMINI_API_KEY
+      - key: GROQ_API_KEY
         sync: false          # Set manually in Render Dashboard → Environment
+      - key: GEMINI_API_KEY
+        sync: false          # For embeddings only — set in Render Dashboard
       - key: GENERATION_MODEL
-        value: models/gemini-3.6-flash
+        value: llama-3.3-70b-versatile
       - key: EMBEDDING_MODEL
         value: models/gemini-embedding-2
       - key: COLLECTION_NAME
