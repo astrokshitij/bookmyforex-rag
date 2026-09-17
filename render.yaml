@@ -11,7 +11,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false          # For embeddings only — set in Render Dashboard
       - key: GENERATION_MODEL
-        value: llama-3.3-70b-versatile
+        value: openai/gpt-oss-120b
       - key: EMBEDDING_MODEL
         value: models/gemini-embedding-2
       - key: COLLECTION_NAME

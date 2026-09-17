@@ -34,7 +34,7 @@ class Settings:
     
     # Groq API (for LLM generation — fast inference, generous rate limits)
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
-    GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "llama-3.3-70b-versatile")
+    GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "openai/gpt-oss-120b")
 
     # Gemini API (for embeddings only — Groq doesn't offer embedding models)
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
