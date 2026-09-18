@@ -37,11 +37,14 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+from typing import Optional, Dict, Any, List
+
 # Request Models
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Support agent query")
     top_k: Optional[int] = Field(default=None, description="Number of context chunks to retrieve")
     document_type: Optional[str] = Field(default=None, description="Filter by document type")
+    history: Optional[List[Dict[str, str]]] = Field(default=None, description="Recent conversation history")
 
 class SettingsRequest(BaseModel):
     groq_api_keys: Optional[str] = Field(default=None, description="Groq API Key(s), comma-separated for multiple")
@@ -50,15 +53,15 @@ class SettingsRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    """Checks vector database on startup and performs auto-ingestion if empty."""
+    """Checks vector database on startup and performs auto-ingestion if empty or BM25 unindexed."""
     stats = vector_store.get_stats()
     logger.info(f"Vector Store Status on Startup: {stats}")
-    if stats["total_chunks"] == 0:
-        logger.info("Vector store is empty. Triggering initial markdown ingestion...")
+    if stats["total_chunks"] == 0 or stats["bm25_indexed_chunks"] == 0:
+        logger.info("Initializing markdown ingestion and building ChromaDB + BM25 indices...")
         try:
             chunks = load_and_chunk_all_markdown()
-            count = vector_store.index_chunks(chunks)
-            logger.info(f"Auto-ingested {count} chunks from workspace markdown files.")
+            count = vector_store.index_chunks(chunks, reset=(stats["total_chunks"] == 0))
+            logger.info(f"Successfully indexed {count} chunks for hybrid search.")
         except Exception as e:
             logger.error(f"Error during startup auto-ingestion: {e}")
 
@@ -92,7 +95,8 @@ async def chat(req: ChatRequest):
         response = rag_engine.generate_response(
             query=req.query,
             top_k=req.top_k,
-            filter_type=req.document_type
+            filter_type=req.document_type,
+            history=req.history
         )
         return response
     except Exception as e:
@@ -103,15 +107,17 @@ async def chat(req: ChatRequest):
 async def trigger_ingestion(reset: bool = True):
     """
     Reads all markdown files in workspace, parses YAML frontmatter,
-    performs clause-preserving chunking, and indexes into ChromaDB.
+    performs clause-preserving chunking, and indexes into ChromaDB and BM25.
+    Also flushes the in-memory response cache.
     """
     try:
         chunks = load_and_chunk_all_markdown()
         count = vector_store.index_chunks(chunks, reset=reset)
+        rag_engine.cache.clear()
         stats = vector_store.get_stats()
         return {
             "status": "success",
-            "message": f"Successfully indexed {count} clause-preserved chunks.",
+            "message": f"Successfully indexed {count} clause-preserved chunks into Hybrid Vector & BM25 indices.",
             "stats": stats
         }
     except Exception as e:
@@ -160,7 +166,8 @@ async def health_check():
         "embedding_model": settings.EMBEDDING_MODEL,
         "generation_model": settings.GENERATION_MODEL,
         "llm_provider": "groq",
-        "vector_store": stats
+        "vector_store": stats,
+        "cache": rag_engine.cache.get_stats()
     }
 
 @app.post("/api/settings")

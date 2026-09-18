@@ -71,11 +71,25 @@ document.addEventListener("DOMContentLoaded", () => {
     // Disable button while waiting
     btnSubmit.disabled = true;
 
+    // Collect history
+    const history = [];
+    messagesList.querySelectorAll(".message:not(#" + typingId + ")").forEach(msg => {
+      const isUser = msg.classList.contains("user");
+      const contentEl = msg.querySelector(".msg-content");
+      if (contentEl) {
+        history.push({
+          role: isUser ? "user" : "assistant",
+          content: contentEl.textContent.trim()
+        });
+      }
+    });
+
     try {
       const payload = {
         query: query,
         top_k: 5,
-        document_type: docFilter.value || null
+        document_type: docFilter.value || null,
+        history: history.slice(-4)
       };
 
       const response = await fetch("/api/chat", {

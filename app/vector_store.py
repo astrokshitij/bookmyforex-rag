@@ -132,12 +132,119 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
         return results
 
 
+class BM25Index:
+    """
+    Lightweight BM25Okapi inverted index for keyword search.
+    Provides fast, exact lexical matching without external dependencies.
+    """
+    def __init__(self, k1: float = 1.5, b: float = 0.75):
+        self.k1 = k1
+        self.b = b
+        self.doc_len: List[int] = []
+        self.avgdl: float = 0.0
+        self.doc_freqs: List[Dict[str, int]] = []
+        self.idf: Dict[str, float] = {}
+        self.corpus_size: int = 0
+        self.chunks: List[DocumentChunk] = []
+
+    def _tokenize(self, text: str) -> List[str]:
+        import re
+        # Tokenize words, numbers, codes, symbols
+        return [w for w in re.findall(r'[a-zA-Z0-9_\-₹$€£]+', text.lower()) if len(w) > 1]
+
+    def build_index(self, chunks: List[DocumentChunk]):
+        self.chunks = chunks
+        self.corpus_size = len(chunks)
+        if self.corpus_size == 0:
+            self.doc_len = []
+            self.avgdl = 0.0
+            self.doc_freqs = []
+            self.idf = {}
+            return
+
+        self.doc_len = []
+        self.doc_freqs = []
+        df: Dict[str, int] = {}
+
+        for chunk in chunks:
+            tokens = self._tokenize(chunk.text)
+            self.doc_len.append(len(tokens))
+            freqs: Dict[str, int] = {}
+            for t in tokens:
+                freqs[t] = freqs.get(t, 0) + 1
+            self.doc_freqs.append(freqs)
+            for t in freqs.keys():
+                df[t] = df.get(t, 0) + 1
+
+        self.avgdl = sum(self.doc_len) / self.corpus_size if self.corpus_size > 0 else 0.0
+
+        self.idf = {}
+        for term, freq in df.items():
+            self.idf[term] = math.log((self.corpus_size - freq + 0.5) / (freq + 0.5) + 1.0)
+        logger.info(f"Built BM25 Index over {self.corpus_size} chunk(s) (vocabulary: {len(self.idf)} terms).")
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        filter_metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        if self.corpus_size == 0:
+            return []
+
+        q_tokens = self._tokenize(query)
+        if not q_tokens:
+            return []
+
+        scores: List[Tuple[int, float]] = []
+
+        for idx, chunk in enumerate(self.chunks):
+            # Apply metadata filtering if specified
+            if filter_metadata:
+                skip = False
+                for k, v in filter_metadata.items():
+                    if v and chunk.metadata.get(k) != v:
+                        skip = True
+                        break
+                if skip:
+                    continue
+
+            doc_len = self.doc_len[idx]
+            freqs = self.doc_freqs[idx]
+            score = 0.0
+
+            for q in q_tokens:
+                if q not in freqs:
+                    continue
+                tf = freqs[q]
+                idf = self.idf.get(q, 0.0)
+                numerator = tf * (self.k1 + 1.0)
+                denominator = tf + self.k1 * (1.0 - self.b + self.b * (doc_len / (self.avgdl or 1.0)))
+                score += idf * (numerator / denominator)
+
+            if score > 0.0:
+                scores.append((idx, score))
+
+        scores.sort(key=lambda x: x[1], reverse=True)
+        results = []
+        for idx, score in scores[:top_k]:
+            c = self.chunks[idx]
+            results.append({
+                "chunk_id": c.chunk_id,
+                "content": c.text,
+                "metadata": c.metadata,
+                "bm25_score": round(score, 4)
+            })
+        return results
+
+
 class VectorStoreManager:
     def __init__(self, persist_dir: Optional[str] = None):
         self.persist_dir = persist_dir or str(settings.CHROMA_DIR)
         os.makedirs(self.persist_dir, exist_ok=True)
         self.client = chromadb.PersistentClient(path=self.persist_dir)
         self.embedding_fn = GeminiEmbeddingFunction()
+        self.bm25_index = BM25Index()
         self.collection = self.client.get_or_create_collection(
             name=settings.COLLECTION_NAME,
             embedding_function=self.embedding_fn,
@@ -151,7 +258,7 @@ class VectorStoreManager:
 
     def index_chunks(self, chunks: List[DocumentChunk], reset: bool = False) -> int:
         """
-        Indexes chunks into the ChromaDB collection.
+        Indexes chunks into both ChromaDB collection and BM25 sparse index.
         If reset is True, clears existing items in the collection first.
         """
         if reset:
@@ -163,18 +270,22 @@ class VectorStoreManager:
             )
 
         if not chunks:
+            self.bm25_index.build_index([])
             return 0
 
         ids = [c.chunk_id for c in chunks]
         documents = [c.text for c in chunks]
         metadatas = [c.metadata for c in chunks]
 
-        # Chroma upsert handles duplicates safely
+        # 1. Update ChromaDB
         self.collection.upsert(
             ids=ids,
             documents=documents,
             metadatas=metadatas
         )
+
+        # 2. Update BM25 Index
+        self.bm25_index.build_index(chunks)
         return len(chunks)
 
     def query(
@@ -185,8 +296,7 @@ class VectorStoreManager:
     ) -> List[Dict[str, Any]]:
         """
         Retrieves top_k matching chunks with similarity scores and metadata.
-        Chunks below MIN_SIMILARITY_THRESHOLD are filtered out to prevent
-        low-quality context from triggering spurious compliance fallbacks.
+        Chunks below MIN_SIMILARITY_THRESHOLD are filtered out.
         """
         results = self.collection.query(
             query_texts=[query_text],
@@ -217,25 +327,113 @@ class VectorStoreManager:
                     "similarity": round(similarity, 4)
                 })
 
-        logger.info(
-            f"Query retrieved {len(retrieved)} chunk(s) above similarity threshold "
-            f"{settings.MIN_SIMILARITY_THRESHOLD} for: '{query_text[:80]}'"
-        )
         return retrieved
 
+    def hybrid_query(
+        self,
+        query_text: str,
+        top_k: int = 5,
+        filter_metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Executes Hybrid Search combining Dense Vector Search (Chroma) + Sparse BM25.
+        Fuses candidate rankings using Reciprocal Rank Fusion (RRF, k=60).
+        """
+        candidate_k = max(top_k * 2, 8)
+
+        # 1. Dense retrieval
+        dense_results = self.query(
+            query_text=query_text,
+            top_k=candidate_k,
+            filter_metadata=filter_metadata
+        )
+
+        # 2. Sparse BM25 retrieval
+        bm25_results = self.bm25_index.search(
+            query=query_text,
+            top_k=candidate_k,
+            filter_metadata=filter_metadata
+        )
+
+        # If BM25 is not built yet or returns nothing, fall back to dense
+        if not bm25_results:
+            return dense_results[:top_k]
+
+        # If dense returned nothing, fall back to BM25
+        if not dense_results:
+            bm25_converted = []
+            for r in bm25_results[:top_k]:
+                bm25_converted.append({
+                    "content": r["content"],
+                    "metadata": r["metadata"],
+                    "distance": 0.0,
+                    "similarity": 0.5,
+                    "bm25_score": r["bm25_score"]
+                })
+            return bm25_converted
+
+        # 3. Reciprocal Rank Fusion (RRF)
+        RRF_K = 60
+        fused: Dict[str, Dict[str, Any]] = {}
+
+        for rank, item in enumerate(dense_results):
+            cid = item["metadata"].get("chunk_id") or item["content"][:80]
+            rrf_score = 1.0 / (RRF_K + rank + 1)
+            fused[cid] = {
+                "item": item,
+                "score": rrf_score,
+                "dense_rank": rank + 1,
+                "bm25_rank": None
+            }
+
+        for rank, item in enumerate(bm25_results):
+            cid = item["metadata"].get("chunk_id") or item["content"][:80]
+            rrf_score = 1.0 / (RRF_K + rank + 1)
+            if cid in fused:
+                fused[cid]["score"] += rrf_score
+                fused[cid]["bm25_rank"] = rank + 1
+            else:
+                fused[cid] = {
+                    "item": {
+                        "content": item["content"],
+                        "metadata": item["metadata"],
+                        "distance": 0.0,
+                        "similarity": 0.5
+                    },
+                    "score": rrf_score,
+                    "dense_rank": None,
+                    "bm25_rank": rank + 1
+                }
+
+        # Sort by fused score descending
+        sorted_candidates = sorted(fused.values(), key=lambda x: x["score"], reverse=True)
+
+        final_results = []
+        for c in sorted_candidates[:top_k]:
+            entry = c["item"]
+            entry["rrf_score"] = round(c["score"], 5)
+            entry["dense_rank"] = c["dense_rank"]
+            entry["bm25_rank"] = c["bm25_rank"]
+            final_results.append(entry)
+
+        logger.info(
+            f"Hybrid RRF search retrieved {len(final_results)} fused chunk(s) for: '{query_text[:80]}'"
+        )
+        return final_results
+
     def get_stats(self) -> Dict[str, Any]:
-        """Returns statistics on the vector store index."""
+        """Returns statistics on the vector store and BM25 index."""
         count = self.collection.count()
-        # Retrieve sample of metadatas to find unique source files
         unique_sources = set()
         if count > 0:
             sample = self.collection.get(limit=count, include=["metadatas"])
             for m in sample.get("metadatas", []):
                 if m and "source_file" in m:
                     unique_sources.add(m["source_file"])
-                    
+
         return {
             "total_chunks": count,
+            "bm25_indexed_chunks": self.bm25_index.corpus_size,
             "unique_documents": len(unique_sources),
             "sources": sorted(list(unique_sources)),
             "collection_name": settings.COLLECTION_NAME,
