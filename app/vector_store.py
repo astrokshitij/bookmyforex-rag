@@ -61,7 +61,7 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
                 response = self._genai_client.models.embed_content(
                     model=self.model_name,
                     contents=text,
-                    config={"task_type": "RETRIEVAL_DOCUMENT"}
+                    config={"task_type": "RETRIEVAL_DOCUMENT", "output_dimensionality": 768}
                 )
                 embeddings.append(response.embeddings[0].values)
             else:
@@ -69,7 +69,8 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
                 res = self._genai_client.embed_content(
                     model=self.model_name,
                     content=text,
-                    task_type="retrieval_document"
+                    task_type="retrieval_document",
+                    output_dimensionality=768
                 )
                 embeddings.append(res["embedding"])
         return embeddings
@@ -89,14 +90,15 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
                         response = self._genai_client.models.embed_content(
                             model=self.model_name,
                             contents=query,
-                            config={"task_type": "RETRIEVAL_QUERY"}
+                            config={"task_type": "RETRIEVAL_QUERY", "output_dimensionality": 768}
                         )
                         embeddings.append(response.embeddings[0].values)
                     else:
                         res = self._genai_client.embed_content(
                             model=self.model_name,
                             content=query,
-                            task_type="retrieval_query"
+                            task_type="retrieval_query",
+                            output_dimensionality=768
                         )
                         embeddings.append(res["embedding"])
                 return embeddings
