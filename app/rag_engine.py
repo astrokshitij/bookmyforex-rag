@@ -217,17 +217,18 @@ class RAGEngine:
             logger.info(f"Cache HIT for query: '{query[:60]}'")
             return cached_resp
 
-        is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback"))
-        k = top_k or (10 if is_broad_query else settings.TOP_K)
+        is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback", "compare", "deals"))
+        k = top_k or (10 if is_broad_query else 6)
         filter_dict = {"document_type": filter_type} if filter_type else None
 
-        # 2. Contextualize query for search
+        # 2. Contextualize and expand query for robust semantic retrieval
         normalized_query = self._normalize_query_terms(query)
-        search_query = self._contextualize_query(normalized_query, history_list)
+        context_query = self._contextualize_query(normalized_query, history_list)
+        expanded_query = self._expand_query_intent(context_query)
 
-        # 3. Hybrid Retrieval (BM25 + Dense Chroma with Reciprocal Rank Fusion)
+        # 3. Multi-Query Hybrid Retrieval (User text + Domain intent expansion)
         retrieved_chunks = vector_store.hybrid_query(
-            query_text=search_query,
+            query_text=expanded_query,
             top_k=k,
             filter_metadata=filter_dict
         )
@@ -460,7 +461,60 @@ class RAGEngine:
         q = re.sub(r'\binternation\b', 'international', q, flags=re.IGNORECASE)
         q = re.sub(r'\be-sim\b', 'esim', q, flags=re.IGNORECASE)
         q = re.sub(r'\blounges\b', 'lounge', q, flags=re.IGNORECASE)
+        q = re.sub(r'\bcanceltion\b', 'cancellation', q, flags=re.IGNORECASE)
+        q = re.sub(r'\bremitence\b', 'remittance', q, flags=re.IGNORECASE)
         return q
+
+    def _expand_query_intent(self, query: str) -> str:
+        """
+        Intelligent intent expander that translates human colloquial/slang phrasing,
+        typos, and high-level questions into rich domain-specific search vectors.
+        """
+        import re
+        q = query.lower()
+
+        INTENT_RULES = [
+            # 1. Emergency & Card Safety
+            (r'\b(stolen|lost|stuck|eaten|eat|swallowed|swallow|block|blocked|theft|robbed|emergency|misplaced|captured)\b',
+             'emergency SOP block card replace card physical FIR local police report 24x7 helpline zero liability insurance'),
+            
+            # 2. Student & Education Remittance
+            (r'\b(student|study|studies|studying|university|college|tuition|semester|gic|admission|daughter|son|overseas studies|abroad education|campus)\b',
+             'education remittance S0305 REMPITSPL REMITSPL Form A2 offer letter ISIC student card TCS 0.5% 0% education loan GIC Canada'),
+            
+            # 3. Perks, Freebies, Lounges, SIM & Rewards
+            (r'\b(free|freebie|freebies|perk|perks|benefit|benefits|reward|rewards|lounge|lounges|sim|esim|gift|voucher|bonus|jetsetter|allpoint|cab|ride)\b',
+             'partner perks free international SIM eSIM airport lounge USD 1200 razorpay 500 voucher ISIC student card Jetsetter bonus Allpoint ATM surcharge'),
+            
+            # 4. Promo Codes, Cashback & All Offers
+            (r'\b(all\s+offer|all\s+deal|all\s+promo|all\s+discount|list\s+all|every\s+offer|coupons|coupon|promo\s+code|cashback|mycash|savings|deals)\b',
+             'BIGFXSALE India Biggest Forex Sale REMPITSPL Education Remittance Special cashback slabs MyCash MakeMyTrip current offers expiry validity'),
+            
+            # 5. TCS & Government Taxes
+            (r'\b(tax|taxes|tcs|tcx|deduction|govt charge|government charge|7\s*lakh|20%|5%|exemption|pan)\b',
+             'TCS Tax Collected at Source LRS 250000 USD limit education loan 0% 5% above 7 lakh 20% remittance'),
+            
+            # 6. Currency Cash Notes, Doorstep & Delivery
+            (r'\b(cash|notes|doorstep|delivery|rate\s*lock|live\s*rate|interbank|markup|exchange\s*rate|cut-off|same-day)\b',
+             'currency notes doorstep delivery same-day cut-off guaranteed rate lock interbank zero markup KYC passport PAN air ticket'),
+            
+            # 7. Card Comparison & Charges
+            (r'\b(compare|difference|which card|yes bank|global usd|instarem|visa|reload|unload|atm charge|hidden fee|annual fee|markup fee)\b',
+             'YES Bank Multi-Currency Forex Card Global USD Forex Card Instarem zero markup interbank rate zero reload unload fee'),
+            
+            # 8. Founder, Leadership & Company Information
+            (r'\b(who\s+(is|are|owns|started|founded|runs)|founder|ceo|ownership|owner|headquarter|history|makemytrip|tripmoney|acquisition|cities|started)\b',
+             'Sudarshan Motwani Founder CEO Nitin Motwani CTO 2012 MakeMyTrip TripMoney 2022 acquisition Gurugram 650 cities')
+        ]
+
+        expansions = []
+        for pattern, keywords in INTENT_RULES:
+            if re.search(pattern, q):
+                expansions.append(keywords)
+
+        if expansions:
+            return f"{query} [{' | '.join(expansions)}]"
+        return query
 
     def clean_for_customer(self, answer_text: str) -> str:
         """Strips internal citation brackets and compliance headers for clean customer pasting."""
@@ -508,17 +562,18 @@ class RAGEngine:
             }) + "\n"
             return
 
-        is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback"))
-        k = top_k or (10 if is_broad_query else settings.TOP_K)
+        is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback", "compare", "deals"))
+        k = top_k or (10 if is_broad_query else 6)
         filter_dict = {"document_type": filter_type} if filter_type else None
 
-        # 2. Contextualize query
+        # 2. Contextualize and expand query
         normalized_query = self._normalize_query_terms(query)
-        search_query = self._contextualize_query(normalized_query, history_list)
+        context_query = self._contextualize_query(normalized_query, history_list)
+        expanded_query = self._expand_query_intent(context_query)
 
         # 3. Hybrid Retrieval
         retrieved_chunks = vector_store.hybrid_query(
-            query_text=search_query,
+            query_text=expanded_query,
             top_k=k,
             filter_metadata=filter_dict
         )
