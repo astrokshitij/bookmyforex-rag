@@ -158,6 +158,7 @@ def chunk_markdown_preserving_clauses(
         h1_match = re.match(r"^#\s+(.+)$", stripped)
         h2_match = re.match(r"^##\s+(.+)$", stripped)
         h3_match = re.match(r"^###\s+(.+)$", stripped)
+        bullet_perk_match = re.match(r"^[\*\-]\s+\*\*(.+?)\*\*[:\s]*(.*)$", stripped)
 
         if h1_match:
             flush_section()
@@ -179,6 +180,13 @@ def chunk_markdown_preserving_clauses(
             current_h3 = h3_match.group(1).strip()
             breadcrumbs = [b for b in [current_h1, current_h2, current_h3] if b]
             current_title = " > ".join(breadcrumbs)
+            current_lines.append(line)
+        elif bullet_perk_match and len(bullet_perk_match.group(1).strip()) > 3:
+            # Major bullet perk (e.g., Free International SIM / eSIM, Airport Lounges)
+            flush_section()
+            perk_name = bullet_perk_match.group(1).strip().rstrip(":")
+            parent = " > ".join([b for b in [current_h1, current_h2, current_h3] if b]) or current_title
+            current_title = f"{parent} > {perk_name}"
             current_lines.append(line)
         else:
             current_lines.append(line)
@@ -234,27 +242,32 @@ def chunk_markdown_preserving_clauses(
 
 def load_and_chunk_all_markdown(workspace_dir: Optional[Path] = None) -> List[DocumentChunk]:
     """
-    Scans the knowledge base directory for all *.md files,
+    Scans all knowledge base markdown files across KB_DIR and BASE_DIR,
     parses YAML frontmatter if present, and extracts clause-preserved chunks.
-    Defaults to settings.KB_DIR if it exists, falling back to settings.BASE_DIR.
     """
-    if workspace_dir is not None:
-        target_dir = workspace_dir
-    elif settings.KB_DIR.exists() and any(settings.KB_DIR.glob("*.md")):
-        target_dir = settings.KB_DIR
-    else:
-        target_dir = settings.BASE_DIR
+    candidate_files: List[Path] = []
 
-    md_files = list(target_dir.glob("*.md"))
-    
-    # Filter out README.md or agent-generated documentation if any
-    filtered_files = [
-        f for f in md_files 
-        if f.name.lower() not in ("readme.md", "walkthrough.md", "implementation_plan.md")
-    ]
+    if workspace_dir is not None:
+        candidate_files.extend(list(workspace_dir.glob("*.md")))
+    else:
+        # 1. Load from KB_DIR if it exists
+        if settings.KB_DIR.exists():
+            candidate_files.extend(list(settings.KB_DIR.glob("*.md")))
+        # 2. Also load root markdown files (e.g. Offers.md, gemini-code-*.md) from BASE_DIR
+        candidate_files.extend(list(settings.BASE_DIR.glob("*.md")))
+
+    # Deduplicate by resolved absolute path and filter non-KB files
+    seen_paths = set()
+    filtered_files: List[Path] = []
+    for f in candidate_files:
+        p = f.resolve()
+        if p not in seen_paths:
+            seen_paths.add(p)
+            if f.name.lower() not in ("readme.md", "walkthrough.md", "implementation_plan.md"):
+                filtered_files.append(f)
 
     all_chunks: List[DocumentChunk] = []
-    for md_file in sorted(filtered_files):
+    for md_file in sorted(filtered_files, key=lambda x: x.name):
         try:
             with open(md_file, "r", encoding="utf-8") as f:
                 content = f.read()
