@@ -22,6 +22,26 @@ Public FAQ states card/net-banking payments are processed over secure HTTPS/trus
 ## Regulatory compliance
 Users/partners are required to comply with applicable FEMA/RBI, AML/PMLA, tax and other laws. Support staff should not override compliance/document requirements based on customer urgency.
 
+## Cashback and MyCash Terms & Conditions
+All promotional cashbacks across BookMyForex are governed by the following mandatory payout terms:
+- **Payout Method by Booking Date:**
+  - **Bookings done till 15th September:** Cashback will be credited directly to the respective bank account used for making successful payment on the BookMyForex platform.
+  - **Bookings done from 16th September onwards:** Cashback will be credited as **MyCash** in your **MakeMyTrip account**.
+- **What is MyCash / How to use MyCash:**
+  - MyCash can be used completely (100%) on booking flights, hotels, and holiday packages on MakeMyTrip.
+  - For buses and cabs, the minimum booking amount should be ₹500 to be able to use MyCash completely.
+  - **How to Access & Check Balance:** Visit the MakeMyTrip app or website and log in with the email or mobile number used for making the BookMyForex booking. Check your MyCash balance and detailed terms at [makemytrip.com/myWallet](http://makemytrip.com/myWallet).
+- **Eligibility & Recipient Rule:** Cashback is credited only to the customer/remitter who placed the order. It is non-transferable.
+- **Credit Timeline:** Stated payout timeline is within 30 days of successful order completion and document verification.
+
+## Cash (Foreign Currency Notes) Terms and Conditions
+Terms and conditions applicable to foreign currency cash / notes orders:
+- **Regulatory Eligibility:** Foreign currency notes purchase is subject to RBI FEMA rules and the annual LRS limit of USD 250,000 equivalent per financial year for resident individuals.
+- **Mandatory Documents:** Valid Passport, PAN card, and confirmed travel proof (visa/ticket) are mandatory.
+- **Delivery & Fulfillment:** Cash notes can be delivered to the doorstep in eligible locations or collected from partner branches. Doorstep delivery requires physical verification of original KYC documents by the delivery agent.
+- **Order Types:** Available under fixed-rate orders (with a rate-lock deposit) or no-obligation orders (Pay on Delivery). Rate-lock deposits are non-refundable upon customer cancellation.
+- **Cashback on Cash Orders:** When cash orders are placed under promotional offers (such as `BIGFXSALE`), the standard Cashback and MyCash payout rules apply.
+
 ## Insurance
 BookMyForex pages state insurance is subject to solicitation and applicable IRDAI rules/insurer offer documents. BookMyForex identifies IRDAI registration CA0429 on its public footer.
 

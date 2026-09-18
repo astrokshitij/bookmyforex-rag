@@ -36,6 +36,42 @@ Public FAQ describes it as an option under a no-obligation order where payment i
 ## Customer asks: Is same-day delivery guaranteed?
 No universal guarantee. It depends on product, city/PIN, working day/holiday, order cut-off, successful payment and complete documents.
 
+## Customer asks: What is MyCash and how is cashback credited?
+- **Bookings done till 15th September:** Cashback is credited directly to the respective bank account used for making payment on BookMyForex.
+- **Bookings done from 16th September onwards:** Cashback is credited as **MyCash** in the customer's **MakeMyTrip account**.
+- **Usage of MyCash:**
+  - Can be used 100% on booking flights, hotels, and holiday packages on MakeMyTrip.
+  - For buses and cabs, the minimum booking amount should be ₹500 to use MyCash completely.
+  - Check balance and terms at [makemytrip.com/myWallet](http://makemytrip.com/myWallet) by logging in with the booking mobile number or email.
+  - Credited only to the customer who placed the order, typically within 30 days of transfer/order completion.
+
+## Customer asks: What are the cash and cashback terms and conditions?
+- **Cash (Foreign Currency Notes):** Available under fixed-rate orders (with a rate-lock deposit) or Pay on Delivery (where eligible). Requires original passport, PAN, and valid travel proof for resident individuals under RBI LRS guidelines.
+- **Cashback on Orders:** When cashback applies to forex card, money transfer, or cash notes, payout follows the 15th/16th September rule (credited to bank account for bookings till 15th September; credited as MyCash in MakeMyTrip account for bookings from 16th September onwards).
+
+## Customer asks: What is the Purpose Code number and which purpose code should I use for money transfer?
+Every international money transfer under RBI FEMA guidelines requires selecting a specific RBI Purpose Code:
+- **Education / Studies Abroad:**
+  - **`S0305`**: Travel for education (living expenses, student accommodation/hostel fees, GIC account deposits for Canada/Germany).
+  - **`S1107`**: Tuition fees / education fees paid directly to schools, colleges, and foreign universities.
+- **Family Maintenance:**
+  - **`S1302`**: Maintenance of close relatives residing abroad (support for spouse, children, parents, siblings).
+- **Medical Treatment:**
+  - **`S0304`**: Travel for medical treatment abroad.
+  - **`S1108`**: Medical treatment expenses paid directly to overseas hospitals/clinics.
+- **Personal Gifts / Donations:**
+  - **`S1301`**: Personal gifts and donations to non-residents abroad.
+- **Travel / Leisure / Tourism:**
+  - **`S0306`**: Private / holiday travel expenses under LRS.
+  - **`S0301`**: Business travel expenses.
+- **Emigration & Employment:**
+  - **`S0303`**: Travel for employment abroad.
+  - **`S1303`**: Emigration and emigration consultancy fees.
+- **Trade & B2B Remittances:**
+  - **`S0101` / `S0102`**: Advance / direct payment for goods import.
+  - **`S1002`**: Software, cloud SaaS, and IT services import.
+  - **`S1008`**: Professional, legal, accounting, and consulting services.
+
 ## Escalate when
 - Customer disputes a rate/charge already applied
 - KYC/residency is unclear
