@@ -218,7 +218,8 @@ class RAGEngine:
         filter_dict = {"document_type": filter_type} if filter_type else None
 
         # 2. Contextualize query for search
-        search_query = self._contextualize_query(query, history_list)
+        normalized_query = self._normalize_query_terms(query)
+        search_query = self._contextualize_query(normalized_query, history_list)
 
         # 3. Hybrid Retrieval (BM25 + Dense Chroma with Reciprocal Rank Fusion)
         retrieved_chunks = vector_store.hybrid_query(
@@ -416,6 +417,47 @@ class RAGEngine:
             "cached": False
         }
 
+    def _generate_with_gemini(self, system_instruction: str, prompt_text: str) -> Optional[str]:
+        """Fallback LLM generation using Google Gemini if Groq keys are temporarily unavailable."""
+        gemini_key = settings.GEMINI_API_KEY
+        if not gemini_key:
+            return None
+
+        try:
+            from google import genai
+            client = genai.Client(api_key=gemini_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_text,
+                config={"system_instruction": system_instruction, "temperature": 0.2}
+            )
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            logger.warning(f"Gemini fallback generation failed via google.genai: {e}")
+            try:
+                import google.generativeai as gai
+                gai.configure(api_key=gemini_key)
+                model = gai.GenerativeModel(
+                    model_name="gemini-1.5-flash",
+                    system_instruction=system_instruction
+                )
+                res = model.generate_content(prompt_text)
+                if res and res.text:
+                    return res.text.strip()
+            except Exception as e2:
+                logger.error(f"Gemini fallback generation failed completely: {e2}")
+        return None
+
+    def _normalize_query_terms(self, query: str) -> str:
+        """Fixes common typos and normalizes domain terms."""
+        import re
+        q = query
+        q = re.sub(r'\binternation\b', 'international', q, flags=re.IGNORECASE)
+        q = re.sub(r'\be-sim\b', 'esim', q, flags=re.IGNORECASE)
+        q = re.sub(r'\blounges\b', 'lounge', q, flags=re.IGNORECASE)
+        return q
+
     def clean_for_customer(self, answer_text: str) -> str:
         """Strips internal citation brackets and compliance headers for clean customer pasting."""
         import re
@@ -588,6 +630,30 @@ class RAGEngine:
             "model_used": self.model_name,
             "citations": structured_citations
         }) + "\n"
+
+    def _generate_with_gemini(self, system_instruction: str, prompt_text: str) -> Optional[str]:
+        """Fallback LLM generation using Google Gemini when Groq is unavailable."""
+        if not settings.GEMINI_API_KEY:
+            return None
+        try:
+            from google import genai
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            for attempt in range(3):
+                try:
+                    resp = client.models.generate_content(
+                        model="gemini-3.6-flash",
+                        contents=prompt_text,
+                        config={"system_instruction": system_instruction, "temperature": 0.2}
+                    )
+                    if resp and resp.text:
+                        return resp.text.strip()
+                except Exception as ex:
+                    logger.warning(f"Gemini generation attempt {attempt + 1} failed: {ex}")
+                    time.sleep(1.5 * (attempt + 1))
+            return None
+        except Exception as e:
+            logger.warning(f"Gemini fallback generation failed: {e}")
+            return None
 
 # Global singleton instance
 rag_engine = RAGEngine()

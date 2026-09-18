@@ -134,10 +134,47 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
         return results
 
 
+BM25_STOP_WORDS = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
+    "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
+    "below", "between", "both", "but", "by", "can", "can't", "cannot", "could",
+    "couldn't", "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down",
+    "during", "each", "few", "for", "from", "further", "had", "hadn't", "has",
+    "hasn't", "have", "haven't", "having", "he", "her", "here", "hers", "herself",
+    "him", "himself", "his", "how", "how's", "i", "i'd", "i'll", "i'm", "i've",
+    "if", "in", "into", "is", "isn't", "it", "it's", "its", "itself", "let's",
+    "me", "more", "most", "mustn't", "my", "myself", "no", "nor", "not", "of",
+    "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves",
+    "out", "over", "own", "same", "shan't", "she", "should", "shouldn't", "so",
+    "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves",
+    "then", "there", "these", "they", "this", "those", "through", "to", "too",
+    "under", "until", "up", "very", "was", "wasn't", "we", "were", "weren't",
+    "what", "when", "where", "which", "while", "who", "whom", "why", "with",
+    "won't", "would", "wouldn't", "you", "your", "yours", "yourself", "yourselves",
+    "tell", "give", "avail", "get", "details", "info", "information", "please",
+    "show", "know", "check", "want", "need", "customer", "asks", "ask"
+}
+
+SYNONYMS = {
+    "sim": ["sim", "esim"],
+    "esim": ["sim", "esim"],
+    "lounge": ["lounge", "lounges", "airport"],
+    "lounges": ["lounge", "lounges", "airport"],
+    "flight": ["flight", "flights", "airline"],
+    "flights": ["flight", "flights", "airline"],
+    "hotel": ["hotel", "hotels", "stay"],
+    "hotels": ["hotel", "hotels", "stay"],
+    "remittance": ["remittance", "remit", "transfer"],
+    "transfer": ["transfer", "transfers", "remittance"],
+    "internation": ["international", "internation", "overseas", "global"],
+    "international": ["international", "internation", "overseas", "global"],
+}
+
+
 class BM25Index:
     """
-    Lightweight BM25Okapi inverted index for keyword search.
-    Provides fast, exact lexical matching without external dependencies.
+    Lightweight BM25Okapi inverted index for keyword search with stop-word filtering
+    and stem normalization for high precision on domain terms.
     """
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         self.k1 = k1
@@ -149,10 +186,42 @@ class BM25Index:
         self.corpus_size: int = 0
         self.chunks: List[DocumentChunk] = []
 
-    def _tokenize(self, text: str) -> List[str]:
+    def _stem(self, w: str) -> str:
+        w = w.lower().strip()
+        if w.startswith("esim"):
+            return "sim"
+        if w.endswith("ies") and len(w) > 4:
+            return w[:-3] + "y"
+        if w.endswith("es") and len(w) > 4:
+            return w[:-2]
+        if w.endswith("s") and not w.endswith("ss") and len(w) > 3:
+            return w[:-1]
+        if w.endswith("ing") and len(w) > 5:
+            return w[:-3]
+        if w.endswith("tional") and len(w) > 8:
+            return w[:-6]
+        if w.endswith("tion") and len(w) > 6:
+            return w[:-4]
+        return w
+
+    def _tokenize(self, text: str, expand_synonyms: bool = False) -> List[str]:
         import re
-        # Tokenize words, numbers, codes, symbols
-        return [w for w in re.findall(r'[a-zA-Z0-9_\-₹$€£]+', text.lower()) if len(w) > 1]
+        raw_tokens = [w for w in re.findall(r'[a-zA-Z0-9_\-₹$€£]+', text.lower()) if len(w) > 1]
+        tokens = []
+        for t in raw_tokens:
+            if t in BM25_STOP_WORDS:
+                continue
+            stemmed = self._stem(t)
+            tokens.append(stemmed)
+            if stemmed != t:
+                tokens.append(t)
+            if expand_synonyms and t in SYNONYMS:
+                tokens.extend(SYNONYMS[t])
+
+        # If all tokens were stopwords, fallback to keeping raw tokens to avoid empty query
+        if not tokens:
+            tokens = [self._stem(t) for t in raw_tokens if len(t) > 1]
+        return tokens
 
     def build_index(self, chunks: List[DocumentChunk]):
         self.chunks = chunks
@@ -169,7 +238,7 @@ class BM25Index:
         df: Dict[str, int] = {}
 
         for chunk in chunks:
-            tokens = self._tokenize(chunk.text)
+            tokens = self._tokenize(chunk.text, expand_synonyms=False)
             self.doc_len.append(len(tokens))
             freqs: Dict[str, int] = {}
             for t in tokens:
@@ -194,7 +263,7 @@ class BM25Index:
         if self.corpus_size == 0:
             return []
 
-        q_tokens = self._tokenize(query)
+        q_tokens = self._tokenize(query, expand_synonyms=True)
         if not q_tokens:
             return []
 
@@ -252,6 +321,18 @@ class VectorStoreManager:
             embedding_function=self.embedding_fn,
             metadata={"hnsw:space": "cosine"}
         )
+        self._ensure_initialized()
+
+    def _ensure_initialized(self):
+        """Ensures ChromaDB and BM25 are populated with KB documents upon instantiation."""
+        try:
+            from app.ingestion import load_and_chunk_all_markdown
+            if self.collection.count() == 0 or self.bm25_index.corpus_size == 0:
+                chunks = load_and_chunk_all_markdown()
+                if chunks:
+                    self.index_chunks(chunks, reset=(self.collection.count() == 0))
+        except Exception as e:
+            logger.warning(f"Vector store auto-init skipped: {e}")
 
     def reload_api_key(self, api_key: str):
         """Updates embedding function with a newly provided API key."""
