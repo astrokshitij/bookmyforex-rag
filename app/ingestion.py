@@ -146,6 +146,8 @@ def chunk_markdown_preserving_clauses(
                 })
         current_lines = []
 
+    in_perks_section = False
+
     for line in lines:
         stripped = line.strip()
         
@@ -166,23 +168,25 @@ def chunk_markdown_preserving_clauses(
             current_h2 = ""
             current_h3 = ""
             current_title = current_h1
+            in_perks_section = any(k in current_h1.lower() for k in ("perk", "partner", "reward", "value-added"))
             current_lines.append(line)
         elif h2_match:
             flush_section()
             current_h2 = h2_match.group(1).strip()
             current_h3 = ""
             current_title = f"{current_h1} > {current_h2}" if current_h1 else current_h2
+            in_perks_section = any(k in current_h2.lower() for k in ("perk", "partner", "reward", "value-added"))
             current_lines.append(line)
         elif h3_match:
             # Check if current block has significant content before switching
-            if len("\n".join(current_lines)) > 400 and has_substantive_content(current_lines):
+            if len("\n".join(current_lines)) > 350 and has_substantive_content(current_lines):
                 flush_section()
             current_h3 = h3_match.group(1).strip()
             breadcrumbs = [b for b in [current_h1, current_h2, current_h3] if b]
             current_title = " > ".join(breadcrumbs)
             current_lines.append(line)
-        elif bullet_perk_match and len(bullet_perk_match.group(1).strip()) > 3:
-            # Major bullet perk (e.g., Free International SIM / eSIM, Airport Lounges)
+        elif in_perks_section and bullet_perk_match and len(bullet_perk_match.group(1).strip()) > 3:
+            # Individual value-added perk bullet point
             flush_section()
             perk_name = bullet_perk_match.group(1).strip().rstrip(":")
             parent = " > ".join([b for b in [current_h1, current_h2, current_h3] if b]) or current_title
@@ -256,15 +260,13 @@ def load_and_chunk_all_markdown(workspace_dir: Optional[Path] = None) -> List[Do
         # 2. Also load root markdown files (e.g. Offers.md, gemini-code-*.md) from BASE_DIR
         candidate_files.extend(list(settings.BASE_DIR.glob("*.md")))
 
-    # Deduplicate by resolved absolute path and filter non-KB files
-    seen_paths = set()
+    seen_filenames = set()
     filtered_files: List[Path] = []
     for f in candidate_files:
-        p = f.resolve()
-        if p not in seen_paths:
-            seen_paths.add(p)
-            if f.name.lower() not in ("readme.md", "walkthrough.md", "implementation_plan.md"):
-                filtered_files.append(f)
+        fname = f.name.lower()
+        if fname not in seen_filenames and fname not in ("readme.md", "walkthrough.md", "implementation_plan.md"):
+            seen_filenames.add(fname)
+            filtered_files.append(f)
 
     all_chunks: List[DocumentChunk] = []
     for md_file in sorted(filtered_files, key=lambda x: x.name):

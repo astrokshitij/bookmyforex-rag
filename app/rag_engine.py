@@ -125,12 +125,14 @@ class RAGEngine:
             return
 
         try:
+            import httpx
             from groq import Groq
+            http_client = httpx.Client(verify=False, timeout=30.0)
             for key in self._api_keys:
-                self._clients[key] = Groq(api_key=key)
+                self._clients[key] = Groq(api_key=key, http_client=http_client)
             logger.info(f"Initialized {len(self._clients)} Groq client(s) (model: {self.model_name}).")
         except ImportError:
-            logger.error("Groq SDK not installed. Run: pip install groq")
+            logger.error("Groq or httpx SDK not installed. Run: pip install groq httpx")
         except Exception as e:
             logger.warning(f"Failed to initialize Groq clients: {e}")
 

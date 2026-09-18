@@ -156,18 +156,32 @@ BM25_STOP_WORDS = {
 }
 
 SYNONYMS = {
-    "sim": ["sim", "esim"],
-    "esim": ["sim", "esim"],
-    "lounge": ["lounge", "lounges", "airport"],
-    "lounges": ["lounge", "lounges", "airport"],
+    "sim": ["sim", "esim", "data", "poshvine", "talktime"],
+    "esim": ["sim", "esim", "data", "poshvine", "talktime"],
+    "lounge": ["lounge", "lounges", "airport", "razorpay", "1200"],
+    "lounges": ["lounge", "lounges", "airport", "razorpay", "1200"],
     "flight": ["flight", "flights", "airline"],
     "flights": ["flight", "flights", "airline"],
     "hotel": ["hotel", "hotels", "stay"],
     "hotels": ["hotel", "hotels", "stay"],
-    "remittance": ["remittance", "remit", "transfer"],
-    "transfer": ["transfer", "transfers", "remittance"],
+    "remittance": ["remittance", "remit", "transfer", "outward"],
+    "transfer": ["transfer", "transfers", "remittance", "outward"],
     "internation": ["international", "internation", "overseas", "global"],
     "international": ["international", "internation", "overseas", "global"],
+    "founder": ["founder", "ceo", "sudarshan", "motwani", "leadership", "founded"],
+    "ceo": ["founder", "ceo", "sudarshan", "motwani", "leadership"],
+    "makemytrip": ["makemytrip", "tripmoney", "mmt", "acquisition", "acquired", "parent", "stake"],
+    "cancellation": ["cancellation", "cancel", "refund", "refunds", "cancelled", "return"],
+    "refund": ["refund", "refunds", "cancellation", "cancel", "reversal"],
+    "refunds": ["refund", "refunds", "cancellation", "cancel", "reversal"],
+    "tuition": ["tuition", "university", "education", "s0305", "remittance", "fees"],
+    "tcs": ["tcs", "tax", "collected", "source", "lrs", "loan", "education"],
+    "jetsetter": ["jetsetter", "bonus", "poshvine", "reward", "rewards", "10000"],
+    "isic": ["isic", "student", "card", "complimentary", "digital"],
+    "voucher": ["voucher", "cab", "airport", "ride", "makemytrip", "amazon", "swiggy", "zomato"],
+    "ride": ["ride", "cab", "voucher", "airport", "transfer", "makemytrip"],
+    "doorstep": ["doorstep", "delivery", "timeline", "hours", "same-day"],
+    "rate": ["rate", "rates", "lock", "guaranteed", "interbank", "live"],
 }
 
 
