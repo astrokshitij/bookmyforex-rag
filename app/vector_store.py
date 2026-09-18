@@ -156,6 +156,12 @@ BM25_STOP_WORDS = {
 }
 
 SYNONYMS = {
+    "offer": ["offer", "offers", "promo", "promotions", "campaign", "sale", "deals", "perks"],
+    "offers": ["offer", "offers", "promo", "promotions", "campaign", "sale", "deals", "perks"],
+    "expiry": ["expiry", "expires", "valid", "validity", "until", "till", "deadline", "period"],
+    "expires": ["expiry", "expires", "valid", "validity", "until", "till", "deadline", "period"],
+    "validity": ["validity", "valid", "until", "till", "expiry", "period", "deadline"],
+    "live": ["live", "current", "active", "ongoing", "valid"],
     "sim": ["sim", "esim", "data", "poshvine", "talktime"],
     "esim": ["sim", "esim", "data", "poshvine", "talktime"],
     "lounge": ["lounge", "lounges", "airport", "razorpay", "1200"],
@@ -164,8 +170,8 @@ SYNONYMS = {
     "flights": ["flight", "flights", "airline"],
     "hotel": ["hotel", "hotels", "stay"],
     "hotels": ["hotel", "hotels", "stay"],
-    "remittance": ["remittance", "remit", "transfer", "outward"],
-    "transfer": ["transfer", "transfers", "remittance", "outward"],
+    "remittance": ["remittance", "remit", "transfer", "outward", "education"],
+    "transfer": ["transfer", "transfers", "remittance", "outward", "education"],
     "internation": ["international", "internation", "overseas", "global"],
     "international": ["international", "internation", "overseas", "global"],
     "founder": ["founder", "ceo", "sudarshan", "motwani", "leadership", "founded"],

@@ -12,13 +12,14 @@ SYSTEM_PROMPT = """You are the official BookMyForex Internal Support AI Assistan
 
 GROUNDING & GUARDRAILS:
 1. Grounding & Semantic Reasoning: Answer using the provided Context below. You may use semantic reasoning — if the context addresses the topic through related terms, synonyms, or equivalent concepts (e.g., airport transfer / cab voucher), treat it as relevant. If the context contains relevant facts (such as offer existence, eligibility, discount amount, or bundled perks) but lacks exhaustive step-by-step instructions, provide all known facts clearly based on the context. Do NOT use outside knowledge or speculate beyond what is documented.
-2. Compliance Fallback: ONLY use the fallback if the provided context genuinely contains NO information that is relevant to the query — not even indirectly or partially. When you must fall back, respond with EXACTLY this statement:
+2. Comprehensive Multi-Offer Synthesis: When the user asks to list, show, or summarize "all" offers, promotions, promo codes, or perks, you MUST list EVERY SINGLE offer, campaign, voucher, and partner perk present across the provided context. Include campaign offers (India's Biggest Forex Sale / `BIGFXSALE`, Education Remittance Special / `REMPITSPL`, Free Airport Ride voucher, Zero Fee Remittance) and all Partner & Visa perks (Free International SIM / eSIM, Airport Lounges, ₹500 First Payment Voucher, Complimentary Digital ISIC Student Card, Visa Power Travel Rewards & ₹10,000 Jetsetter Bonus, Zero Surcharge Allpoint ATMs). Present them in a structured table or organized sections with Promo Code, Product, Minimum Order, Key Benefits, and Expiry / Validity Date.
+3. Compliance Fallback: ONLY use the fallback if the provided context genuinely contains NO information that is relevant to the query — not even indirectly or partially. When you must fall back, respond with EXACTLY this statement:
 "{fallback_statement}"
 Do not add pleasantries or partial guesses before or after this fallback sentence.
-3. Source File Citations: Every factual answer MUST cite the source file and section from which the facts were obtained (e.g., `[Offers.md: Section 3.A]` or `[gemini-code-1789542027610.md: Section 1]`).
-4. Operational Alerts: When applicable, explicitly highlight critical DOs and DON'Ts, eligibility caveats, deadline windows (e.g. 60-day claim / 30-day payout), and mandatory documentation (e.g. physical FIR requirement).
-5. Clean Output: NEVER output internal technical details, chunk IDs, similarity scores, match percentages, distance values, or database metadata in your response.
-6. Format: Use clean markdown with clear bullet points, bold key terms, and code blocks for promo codes. At the bottom of valid answers, include a "📚 Sources Cited" section listing the referenced documents and sections.
+4. Source File Citations: Every factual answer MUST cite the source file and section from which the facts were obtained (e.g., `[offers.md: Section 3.A]` or `[current-offers.md: Section 2]`).
+5. Operational Alerts: When applicable, explicitly highlight critical DOs and DON'Ts, eligibility caveats, deadline windows (e.g. 60-day claim / 30-day payout, bookings till 15th Sep vs from 16th Sep MyCash), and mandatory documentation.
+6. Clean Output: NEVER output internal technical details, chunk IDs, similarity scores, match percentages, distance values, or database metadata in your response.
+7. Format: Use clean markdown with clear tables or bullet points, bold key terms, and code blocks for promo codes. At the bottom of valid answers, include a "📚 Sources Cited" section listing the referenced documents and sections.
 """
 
 
@@ -216,7 +217,8 @@ class RAGEngine:
             logger.info(f"Cache HIT for query: '{query[:60]}'")
             return cached_resp
 
-        k = top_k or settings.TOP_K
+        is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback"))
+        k = top_k or (10 if is_broad_query else settings.TOP_K)
         filter_dict = {"document_type": filter_type} if filter_type else None
 
         # 2. Contextualize query for search
@@ -506,11 +508,13 @@ class RAGEngine:
             }) + "\n"
             return
 
-        k = top_k or settings.TOP_K
+        is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback"))
+        k = top_k or (10 if is_broad_query else settings.TOP_K)
         filter_dict = {"document_type": filter_type} if filter_type else None
 
         # 2. Contextualize query
-        search_query = self._contextualize_query(query, history_list)
+        normalized_query = self._normalize_query_terms(query)
+        search_query = self._contextualize_query(normalized_query, history_list)
 
         # 3. Hybrid Retrieval
         retrieved_chunks = vector_store.hybrid_query(
