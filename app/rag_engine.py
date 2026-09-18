@@ -12,7 +12,11 @@ SYSTEM_PROMPT = """You are the official BookMyForex Internal Support AI Assistan
 
 GROUNDING & GUARDRAILS:
 1. Grounding & Semantic Reasoning: Answer using the provided Context below. You may use semantic reasoning — if the context addresses the topic through related terms, synonyms, or equivalent concepts (e.g., airport transfer / cab voucher), treat it as relevant. If the context contains relevant facts (such as offer existence, eligibility, discount amount, or bundled perks) but lacks exhaustive step-by-step instructions, provide all known facts clearly based on the context. Do NOT use outside knowledge or speculate beyond what is documented.
-2. Comprehensive Multi-Offer Synthesis: When the user asks to list, show, or summarize "all" offers, promotions, promo codes, or perks, you MUST list EVERY SINGLE offer, campaign, voucher, and partner perk present across the provided context. Include campaign offers (India's Biggest Forex Sale / `BIGFXSALE`, Education Remittance Special / `REMPITSPL`, Free Airport Ride voucher, Zero Fee Remittance) and all Partner & Visa perks (Free International SIM / eSIM, Airport Lounges, ₹500 First Payment Voucher, Complimentary Digital ISIC Student Card, Visa Power Travel Rewards & ₹10,000 Jetsetter Bonus, Zero Surcharge Allpoint ATMs). Present them in a structured table or organized sections with Promo Code, Product, Minimum Order, Key Benefits, and Expiry / Validity Date.
+2. Exhaustive Multi-Offer Synthesis (No Exceptions): When asked to list, show, or summarize "all" offers, promotions, promo codes, or perks, you MUST list EVERY SINGLE offer, campaign, bundled card deliverable, and partner perk present across the provided context without skipping any. Organize them clearly:
+   - Category 1: Campaign & Promo-Code Offers (`BIGFXSALE` / India's Biggest Forex Sale, `REMPITSPL` / `REMITSPL` / Education Remittance Special, Zero-Fee Remittance Offer)
+   - Category 2: Partner & Visa Value-Added Perks (Free International Airport Lounges, Free International SIM / eSIM, ₹500 First Payment Voucher, Complimentary Digital ISIC Student Card, Visa Power Travel Rewards & ₹10,000 Jetsetter Bonus, Zero-Surcharge Allpoint ATMs, Medical Tourism & City Experiences)
+   - Category 3: New-Card Bundled Travel Deliverables (MakeMyTrip ₹500 Airport Transfer Cab Voucher, Up to ₹6,000 off Flights, Up to 30% off Hotels, Up to 25% off Tours & Attractions, ₹250 Visa Services Gift Card)
+   For every entry, include the exact Promo Code (or N/A), Product / Service, Minimum Spend / Transfer, Key Benefits, and Expiry / Validity Date.
 3. Compliance Fallback: ONLY use the fallback if the provided context genuinely contains NO information that is relevant to the query — not even indirectly or partially. When you must fall back, respond with EXACTLY this statement:
 "{fallback_statement}"
 Do not add pleasantries or partial guesses before or after this fallback sentence.
@@ -218,7 +222,7 @@ class RAGEngine:
             return cached_resp
 
         is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback", "compare", "deals"))
-        k = top_k or (10 if is_broad_query else 6)
+        k = top_k or (12 if is_broad_query else 6)
         filter_dict = {"document_type": filter_type} if filter_type else None
 
         # 2. Contextualize and expand query for robust semantic retrieval
@@ -487,8 +491,8 @@ class RAGEngine:
              'partner perks free international SIM eSIM airport lounge USD 1200 razorpay 500 voucher ISIC student card Jetsetter bonus Allpoint ATM surcharge'),
             
             # 4. Promo Codes, Cashback & All Offers
-            (r'\b(all\s+offer|all\s+deal|all\s+promo|all\s+discount|list\s+all|every\s+offer|coupons|coupon|promo\s+code|cashback|mycash|savings|deals)\b',
-             'BIGFXSALE India Biggest Forex Sale REMPITSPL Education Remittance Special cashback slabs MyCash MakeMyTrip current offers expiry validity'),
+            (r'\b(all\s+offer|all\s+the\s+offer|all\s+deal|all\s+promo|all\s+discount|list\s+all|every\s+offer|coupons|coupon|promo\s+code|cashback|mycash|savings|deals|all\s+perk|all\s+benefit)\b',
+             'BIGFXSALE India Biggest Forex Sale REMPITSPL Education Remittance Special Zero Fee Remittance MakeMyTrip Airport Transfers Flights Hotels Tours Voucher Free International SIM eSIM Airport Lounges 500 First Payment ISIC student card Jetsetter bonus Allpoint ATM surcharge expiry validity'),
             
             # 5. TCS & Government Taxes
             (r'\b(tax|taxes|tcs|tcx|deduction|govt charge|government charge|7\s*lakh|20%|5%|exemption|pan)\b',
@@ -563,7 +567,7 @@ class RAGEngine:
             return
 
         is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback", "compare", "deals"))
-        k = top_k or (10 if is_broad_query else 6)
+        k = top_k or (12 if is_broad_query else 6)
         filter_dict = {"document_type": filter_type} if filter_type else None
 
         # 2. Contextualize and expand query
