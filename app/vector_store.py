@@ -338,13 +338,15 @@ class VectorStoreManager:
         self._ensure_initialized()
 
     def _ensure_initialized(self):
-        """Ensures ChromaDB and BM25 are populated with KB documents upon instantiation."""
+        """Ensures ChromaDB and BM25 are cleanly synchronized with KB documents."""
         try:
             from app.ingestion import load_and_chunk_all_markdown
-            if self.collection.count() == 0 or self.bm25_index.corpus_size == 0:
-                chunks = load_and_chunk_all_markdown()
-                if chunks:
-                    self.index_chunks(chunks, reset=(self.collection.count() == 0))
+            chunks = load_and_chunk_all_markdown()
+            if chunks:
+                if self.collection.count() != len(chunks) or self.bm25_index.corpus_size != len(chunks):
+                    self.index_chunks(chunks, reset=True)
+                else:
+                    self.bm25_index.build_index(chunks)
         except Exception as e:
             logger.warning(f"Vector store auto-init skipped: {e}")
 
@@ -407,8 +409,9 @@ class VectorStoreManager:
             docs = results["documents"][0]
             metas = results["metadatas"][0] if "metadatas" in results else [{}] * len(docs)
             dists = results["distances"][0] if "distances" in results else [0.0] * len(docs)
+            ids = results["ids"][0] if "ids" in results else [""] * len(docs)
 
-            for doc, meta, dist in zip(docs, metas, dists):
+            for doc, meta, dist, chunk_id in zip(docs, metas, dists, ids):
                 # Cosine distance to similarity: similarity = 1 - distance
                 similarity = max(0.0, 1.0 - dist)
                 if similarity < settings.MIN_SIMILARITY_THRESHOLD:
@@ -418,6 +421,7 @@ class VectorStoreManager:
                     )
                     continue
                 retrieved.append({
+                    "chunk_id": chunk_id or meta.get("chunk_id"),
                     "content": doc,
                     "metadata": meta,
                     "distance": dist,
@@ -434,7 +438,7 @@ class VectorStoreManager:
     ) -> List[Dict[str, Any]]:
         """
         Executes Hybrid Search combining Dense Vector Search (Chroma) + Sparse BM25.
-        Fuses candidate rankings using Reciprocal Rank Fusion (RRF, k=60).
+        Fuses candidate rankings using Reciprocal Rank Fusion (RRF, k=20).
         """
         candidate_k = max(top_k * 2, 8)
 
@@ -461,6 +465,7 @@ class VectorStoreManager:
             bm25_converted = []
             for r in bm25_results[:top_k]:
                 bm25_converted.append({
+                    "chunk_id": r.get("chunk_id"),
                     "content": r["content"],
                     "metadata": r["metadata"],
                     "distance": 0.0,
@@ -470,36 +475,45 @@ class VectorStoreManager:
             return bm25_converted
 
         # 3. Reciprocal Rank Fusion (RRF)
-        RRF_K = 60
+        RRF_K = 20
         fused: Dict[str, Dict[str, Any]] = {}
 
-        for rank, item in enumerate(dense_results):
-            cid = item["metadata"].get("chunk_id") or item["content"][:80]
-            rrf_score = 1.0 / (RRF_K + rank + 1)
+        # 1. Insert BM25 results with score-weighted RRF
+        for rank, item in enumerate(bm25_results):
+            cid = item.get("chunk_id") or item.get("metadata", {}).get("chunk_id") or f"{item.get('metadata', {}).get('source_file')}_{item.get('metadata', {}).get('section_title')}"
+            bm25_sc = item.get("bm25_score", 0.0)
+            bm25_weight = 1.0 + (bm25_sc / 4.0)
+            rrf_score = (1.0 / (RRF_K + rank + 1)) * bm25_weight
             fused[cid] = {
-                "item": item,
+                "item": {
+                    "chunk_id": cid,
+                    "content": item["content"],
+                    "metadata": item["metadata"],
+                    "distance": 0.0,
+                    "similarity": 0.5,
+                    "bm25_score": bm25_sc
+                },
                 "score": rrf_score,
-                "dense_rank": rank + 1,
-                "bm25_rank": None
+                "dense_rank": None,
+                "bm25_rank": rank + 1
             }
 
-        for rank, item in enumerate(bm25_results):
-            cid = item["metadata"].get("chunk_id") or item["content"][:80]
-            rrf_score = 1.0 / (RRF_K + rank + 1)
+        # 2. Add / fuse Dense Chroma results
+        for rank, item in enumerate(dense_results):
+            cid = item.get("chunk_id") or item.get("metadata", {}).get("chunk_id") or f"{item.get('metadata', {}).get('source_file')}_{item.get('metadata', {}).get('section_title')}"
+            sim = item.get("similarity", 0.5)
+            dense_weight = 1.0 if sim >= 0.40 else 0.5
+            dense_rrf = (1.0 / (RRF_K + rank + 1)) * dense_weight
             if cid in fused:
-                fused[cid]["score"] += rrf_score
-                fused[cid]["bm25_rank"] = rank + 1
+                fused[cid]["score"] += dense_rrf
+                fused[cid]["dense_rank"] = rank + 1
+                fused[cid]["item"]["similarity"] = sim
             else:
                 fused[cid] = {
-                    "item": {
-                        "content": item["content"],
-                        "metadata": item["metadata"],
-                        "distance": 0.0,
-                        "similarity": 0.5
-                    },
-                    "score": rrf_score,
-                    "dense_rank": None,
-                    "bm25_rank": rank + 1
+                    "item": item,
+                    "score": dense_rrf,
+                    "dense_rank": rank + 1,
+                    "bm25_rank": None
                 }
 
         # Sort by fused score descending

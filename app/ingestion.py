@@ -220,6 +220,7 @@ def chunk_markdown_preserving_clauses(
         chunk_id = f"{file_path.stem}_{chunk_index}_{hasher.hexdigest()[:8]}"
 
         meta_dict = {
+            "chunk_id": chunk_id,
             "source_file": source_file,
             "document_title": doc_title,
             "document_type": doc_type,
