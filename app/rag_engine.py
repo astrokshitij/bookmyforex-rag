@@ -1,7 +1,7 @@
 import time
 import logging
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from app.config import settings
 from app.vector_store import vector_store
 
@@ -12,11 +12,12 @@ SYSTEM_PROMPT = """You are the official BookMyForex Internal Support AI Assistan
 
 GROUNDING & GUARDRAILS:
 1. Grounding & Semantic Reasoning: Answer using the provided Context below. You may use semantic reasoning — if the context addresses the topic through related terms, synonyms, or equivalent concepts (e.g., airport transfer / cab voucher), treat it as relevant. If the context contains relevant facts (such as offer existence, eligibility, discount amount, or bundled perks) but lacks exhaustive step-by-step instructions, provide all known facts clearly based on the context. Do NOT use outside knowledge or speculate beyond what is documented.
-2. Exhaustive Multi-Offer Synthesis (No Exceptions): When asked to list, show, or summarize "all" offers, promotions, promo codes, or perks, you MUST list EVERY SINGLE offer, campaign, bundled card deliverable, and partner perk present across the provided context without skipping any. Organize them clearly:
+2. Exhaustive Multi-Offer Synthesis (No Exceptions): When asked to list, show, or summarize "all" offers, promotions, promo codes, or perks, you MUST list EVERY SINGLE offer, campaign, bundled card deliverable, and partner perk present across the provided context without skipping any:
    - Category 1: Campaign & Promo-Code Offers (`BIGFXSALE` / India's Biggest Forex Sale, `REMPITSPL` / `REMITSPL` / Education Remittance Special, Zero-Fee Remittance Offer)
    - Category 2: Partner & Visa Value-Added Perks (Free International Airport Lounges, Free International SIM / eSIM, ₹500 First Payment Voucher, Complimentary Digital ISIC Student Card, Visa Power Travel Rewards & ₹10,000 Jetsetter Bonus, Zero-Surcharge Allpoint ATMs, Medical Tourism & City Experiences)
    - Category 3: New-Card Bundled Travel Deliverables (MakeMyTrip ₹500 Airport Transfer Cab Voucher, Up to ₹6,000 off Flights, Up to 30% off Hotels, Up to 25% off Tours & Attractions, ₹250 Visa Services Gift Card)
    For every entry, include the exact Promo Code (or N/A), Product / Service, Minimum Spend / Transfer, Key Benefits, and Expiry / Validity Date.
+   CRITICAL EXPIRY / VALIDITY RULE: If an explicit calendar expiry date is not stated in the document for an item (such as ongoing bundled new-card deliverables), state "Ongoing / Bundled with New Card (verify live page)" — NEVER omit or drop an offer simply because an expiry date is not listed!
 3. Compliance Fallback: ONLY use the fallback if the provided context genuinely contains NO information that is relevant to the query — not even indirectly or partially. When you must fall back, respond with EXACTLY this statement:
 "{fallback_statement}"
 Do not add pleasantries or partial guesses before or after this fallback sentence.
@@ -196,50 +197,147 @@ class RAGEngine:
 
         return query
 
-    def generate_response(
+    def _get_aggregation_chunks(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Detects broad domain aggregation questions (e.g., all offers, all KYC documents,
+        all TCS rules, all fees, all card variants) and returns canonical chunks.
+        Guarantees 100% recall across multi-document knowledge topics without relying on top_k cutoffs.
+        """
+        import re
+        q = query.lower()
+        canonical_chunks: List[Dict[str, Any]] = []
+
+        # 1. Broad Offers / Deals / Perks / Discounts Aggregation
+        is_offers_agg = (
+            any(phrase in q for phrase in (
+                "all offer", "all the offer", "every offer", "list all offer", "all deal",
+                "all promo", "all discount", "all perk", "all benefit", "all coupon",
+                "current offer", "active offer", "available offer", "offers and their expiry",
+                "offers currently live", "what are the offer", "what are all the offer",
+                "give me all offer", "show all offer", "list of all the offer", "all current",
+                "list the offer", "list all the offer", "what offers", "what are all offers",
+                "give me list of all the offer"
+            ))
+            or (re.search(r'\b(all|every|list|summary|overview|what\s+are)\b', q) and re.search(r'\b(offer|offers|deal|deals|perk|perks|promo|promos|discount|discounts|cashback)\b', q))
+        )
+        if is_offers_agg:
+            canonical_chunks.extend(
+                vector_store.get_canonical_chunks(
+                    source_files=["offers.md", "current-offers.md"],
+                    exclude_sections=["Sources"]
+                )
+            )
+
+        # 2. Broad KYC / Documentation Aggregation
+        is_kyc_agg = (
+            re.search(r'\b(all\s+kyc|all\s+documents|all\s+the\s+documents|mandatory\s+documents|documents\s+needed|documents\s+required|kyc\s+requirements|paperwork)\b', q)
+            or (re.search(r'\b(all|what|list|every)\b', q) and re.search(r'\b(kyc|document|documents|proof|proofs)\b', q))
+        )
+        if is_kyc_agg:
+            canonical_chunks.extend(
+                vector_store.get_canonical_chunks(
+                    source_files=["money-transfer.md", "currency-exchange.md", "forex-card.md", "tcs-and-regulations.md"],
+                    section_keywords=["document", "kyc", "mandatory", "eligibility", "purpose"]
+                )
+            )
+
+        # 3. Broad TCS / Regulatory Tax Aggregation
+        is_tcs_agg = (
+            re.search(r'\b(all\s+tcs|tcs\s+rules|tcs\s+rates|tcs\s+slabs|tcs\s+structure|tax\s+rules|lrs\s+limit|all\s+tax)\b', q)
+            or (re.search(r'\b(all|what|list|overview|summary)\b', q) and re.search(r'\b(tcs|tax|taxes)\b', q))
+        )
+        if is_tcs_agg:
+            canonical_chunks.extend(
+                vector_store.get_canonical_chunks(
+                    source_files=["tcs-and-regulations.md"],
+                    exclude_sections=["Sources"]
+                )
+            )
+
+        # 4. Broad Fees & Charges Aggregation
+        is_fees_agg = (
+            re.search(r'\b(all\s+fees|all\s+charges|fee\s+structure|charges\s+list|schedule\s+of\s+charges|all\s+costs)\b', q)
+            or (re.search(r'\b(all|what|list|overview)\b', q) and re.search(r'\b(fee|fees|charge|charges|cost|costs)\b', q))
+        )
+        if is_fees_agg:
+            canonical_chunks.extend(
+                vector_store.get_canonical_chunks(
+                    source_files=["fees-and-charges.md"],
+                    exclude_sections=["Sources"]
+                )
+            )
+
+        # 5. Broad Card Variants / Comparison Aggregation
+        is_cards_agg = (
+            re.search(r'\b(all\s+cards|all\s+forex\s+cards|card\s+variants|compare\s+cards|which\s+cards|different\s+cards)\b', q)
+        )
+        if is_cards_agg:
+            canonical_chunks.extend(
+                vector_store.get_canonical_chunks(
+                    source_files=["forex-card.md", "offers.md"],
+                    section_keywords=["variant", "specifications", "multi-currency", "global usd"]
+                )
+            )
+
+        return canonical_chunks
+
+    def _retrieve_and_assemble_context(
         self,
         query: str,
+        history_list: Optional[List[Dict[str, str]]] = None,
         top_k: Optional[int] = None,
-        filter_type: Optional[str] = None,
-        history: Optional[List[Dict[str, str]]] = None
-    ) -> Dict[str, Any]:
+        filter_type: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
         """
-        Executes the optimized RAG pipeline:
-        1. Check In-Memory TTL/LRU Response Cache (Instant Return)
-        2. Contextual Query Rewriting for Multi-Turn Follow-Ups
-        3. Hybrid Search (Chroma Dense Vectors + BM25 Sparse with RRF)
-        4. Strict Grounding Guardrail Prompting with Conversation Memory
-        5. Groq LLM Generation with multi-key round-robin rotation & 429 failover
-        6. Store in Cache & Return
+        Unified retrieval and context assembly combining:
+        1. Contextual query rewriting
+        2. Domain-specific query expansion
+        3. Deterministic canonical chunk retrieval for broad aggregation queries
+        4. Dense + Sparse Hybrid Search with Reciprocal Rank Fusion (RRF)
+        5. Deduplication and structured citation formatting
         """
-        history_list = history or []
-        history_len = len(history_list)
-
-        # 1. Check Cache
-        cached_resp = self.cache.get(query, filter_type=filter_type, history_len=history_len)
-        if cached_resp:
-            logger.info(f"Cache HIT for query: '{query[:60]}'")
-            return cached_resp
-
-        is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback", "compare", "deals"))
-        k = top_k or (12 if is_broad_query else 6)
+        normalized_query = self._normalize_query_terms(query)
+        context_query = self._contextualize_query(normalized_query, history_list or [])
+        expanded_query = self._expand_query_intent(context_query)
         filter_dict = {"document_type": filter_type} if filter_type else None
 
-        # 2. Contextualize and expand query for robust semantic retrieval
-        normalized_query = self._normalize_query_terms(query)
-        context_query = self._contextualize_query(normalized_query, history_list)
-        expanded_query = self._expand_query_intent(context_query)
+        # 1. Fetch any domain aggregation chunks for broad queries
+        canonical_chunks = self._get_aggregation_chunks(normalized_query)
+        is_broad_query = bool(canonical_chunks) or any(
+            w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks",
+                                         "promotions", "discounts", "codes", "cashback", "compare", "deals")
+        )
+        k = top_k or (18 if is_broad_query else 6)
 
-        # 3. Multi-Query Hybrid Retrieval (User text + Domain intent expansion)
-        retrieved_chunks = vector_store.hybrid_query(
+        # 2. Multi-Query Hybrid Retrieval
+        hybrid_chunks = vector_store.hybrid_query(
             query_text=expanded_query,
             top_k=k,
             filter_metadata=filter_dict
         )
 
-        # Structure clean citations for UI
-        structured_citations = []
-        context_parts = []
+        # 3. Merge canonical chunks + hybrid chunks, preserving uniqueness by chunk_id
+        seen_chunk_ids = set()
+        retrieved_chunks: List[Dict[str, Any]] = []
+
+        # Canonical chunks first (guarantees 100% presence)
+        for c in canonical_chunks:
+            cid = c.get("chunk_id")
+            if cid and cid not in seen_chunk_ids:
+                seen_chunk_ids.add(cid)
+                retrieved_chunks.append(c)
+
+        # Hybrid search chunks appended up to max limit
+        max_total = max(k, len(canonical_chunks) + 4)
+        for c in hybrid_chunks:
+            cid = c.get("chunk_id")
+            if cid and cid not in seen_chunk_ids and len(retrieved_chunks) < max_total:
+                seen_chunk_ids.add(cid)
+                retrieved_chunks.append(c)
+
+        # 4. Structure clean citations and context string
+        structured_citations: List[Dict[str, Any]] = []
+        context_parts: List[str] = []
 
         for item in retrieved_chunks:
             meta = item.get("metadata", {})
@@ -259,6 +357,39 @@ class RAGEngine:
             )
 
         context_str = "\n".join(context_parts)
+        return retrieved_chunks, structured_citations, context_str
+
+    def generate_response(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        filter_type: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes the optimized RAG pipeline:
+        1. Check In-Memory TTL/LRU Response Cache (Instant Return)
+        2. Unified Hybrid & Deterministic Canonical Retrieval
+        3. Strict Grounding Guardrail Prompting with Conversation Memory
+        4. Groq LLM Generation with multi-key round-robin rotation & 429 failover
+        5. Store in Cache & Return
+        """
+        history_list = history or []
+        history_len = len(history_list)
+
+        # 1. Check Cache
+        cached_resp = self.cache.get(query, filter_type=filter_type, history_len=history_len)
+        if cached_resp:
+            logger.info(f"Cache HIT for query: '{query[:60]}'")
+            return cached_resp
+
+        # 2. Retrieve & assemble context
+        retrieved_chunks, structured_citations, context_str = self._retrieve_and_assemble_context(
+            query=query,
+            history_list=history_list,
+            top_k=top_k,
+            filter_type=filter_type
+        )
 
         # If hybrid search returned no relevant chunks
         if not retrieved_chunks:
@@ -338,7 +469,7 @@ class RAGEngine:
                     model=self.model_name,
                     messages=messages,
                     temperature=0.2,
-                    max_tokens=2048
+                    max_tokens=4096
                 )
                 answer = response.choices[0].message.content.strip()
                 fallback_triggered = (settings.COMPLIANCE_FALLBACK.lower() in answer.lower())
@@ -566,38 +697,13 @@ class RAGEngine:
             }) + "\n"
             return
 
-        is_broad_query = any(w in query.lower() for w in ("all", "list", "every", "summary", "overview", "offers", "perks", "promotions", "discounts", "codes", "cashback", "compare", "deals"))
-        k = top_k or (12 if is_broad_query else 6)
-        filter_dict = {"document_type": filter_type} if filter_type else None
-
-        # 2. Contextualize and expand query
-        normalized_query = self._normalize_query_terms(query)
-        context_query = self._contextualize_query(normalized_query, history_list)
-        expanded_query = self._expand_query_intent(context_query)
-
-        # 3. Hybrid Retrieval
-        retrieved_chunks = vector_store.hybrid_query(
-            query_text=expanded_query,
-            top_k=k,
-            filter_metadata=filter_dict
+        # 2. Retrieve & assemble context
+        retrieved_chunks, structured_citations, context_str = self._retrieve_and_assemble_context(
+            query=query,
+            history_list=history_list,
+            top_k=top_k,
+            filter_type=filter_type
         )
-
-        structured_citations = []
-        context_parts = []
-        for item in retrieved_chunks:
-            meta = item.get("metadata", {})
-            content = item.get("content", "")
-            structured_citations.append({
-                "source_file": meta.get("source_file", "Unknown"),
-                "document_title": meta.get("document_title", "Document"),
-                "document_type": meta.get("document_type", "kb"),
-                "section_title": meta.get("section_title", "General"),
-                "last_updated": meta.get("last_updated", ""),
-                "snippet": content[:300] + "..." if len(content) > 300 else content
-            })
-            context_parts.append(
-                f"--- SOURCE: {meta.get('source_file')} | SECTION: {meta.get('section_title')} ---\n{content}\n"
-            )
 
         # Send initial event with citations immediately (<100ms)
         yield json.dumps({
@@ -619,7 +725,6 @@ class RAGEngine:
             return
 
         formatted_sys_prompt = SYSTEM_PROMPT.format(fallback_statement=settings.COMPLIANCE_FALLBACK)
-        context_str = "\n".join(context_parts)
         user_content = (
             f"KNOWLEDGE BASE CONTEXT:\n\n{context_str}\n\n"
             f"CUSTOMER SUPPORT QUERY: {query}\n\n"
@@ -652,7 +757,7 @@ class RAGEngine:
                         model=self.model_name,
                         messages=messages,
                         temperature=0.2,
-                        max_tokens=2048,
+                        max_tokens=4096,
                         stream=True
                     )
                     for chunk in stream:

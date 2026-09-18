@@ -5,17 +5,17 @@ last_updated: "2026-09-16"
 status: "active"
 ---
 
-# 1. Overview of BookMyForex Forex Card Perks & Upgrades
+# 1. BookMyForex New Card Welcome Offers, Travel Perks & Upgrades
 
-Every new BookMyForex Forex Card comes bundled with travel rewards and perks designed to cover travel spends before, during, and after a trip[cite: 1]. 
+Every new BookMyForex Forex Card comes bundled with welcome offers, travel rewards, discounts, and perks designed to cover travel spends before, during, and after a trip[cite: 1]. 
 
-### Key Deliverables Included with New Cards
-* MakeMyTrip Airport Transfers Voucher (₹500 off)[cite: 1].
-* Up to 2% Cashback on Forex Loads (via promo code `BIGFXSALE`, minimum order value ₹15,000)[cite: 1].
-* Up to ₹6,000 Off on International Flights[cite: 1].
-* Up to 30% Off on International Hotels[cite: 1].
-* Visa Services Gift Card Worth ₹250[cite: 1].
-* Up to 25% Off on Tours & Attractions[cite: 1].
+### Key Deliverables & Welcome Offers Included with New Cards
+* **MakeMyTrip Airport Transfers Voucher (₹500 off):** Complimentary cab voucher for airport transfers on new travel Forex Card purchase with minimum order value ₹15,000; valid through September 30, 2026 (per Current Offers)[cite: 1].
+* **Up to 2% Cashback on Forex Loads:** Available via promo code `BIGFXSALE` (minimum order value ₹15,000 for basic perk; ₹25,000 for general cashback slabs); valid until September 30, 2026[cite: 1].
+* **Up to ₹6,000 Off on International Flights:** Flight booking discount on MakeMyTrip bundled with new card purchase; ongoing bundled card deliverable (no explicit expiry date specified in document; check live page)[cite: 1].
+* **Up to 30% Off on International Hotels:** Hotel booking discount on MakeMyTrip bundled with new card purchase; ongoing bundled card deliverable (no explicit expiry date specified in document; check live page)[cite: 1].
+* **Visa Services Gift Card Worth ₹250:** Gift voucher for Visa services bundled with new card purchase; ongoing bundled card deliverable (no explicit expiry date specified in document; check live page)[cite: 1].
+* **Up to 25% Off on Tours & Attractions:** Activities and tours discount on MakeMyTrip bundled with new card purchase; ongoing bundled card deliverable (no explicit expiry date specified in document; check live page)[cite: 1].
 
 ---
 

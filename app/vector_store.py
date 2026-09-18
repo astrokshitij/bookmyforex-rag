@@ -538,6 +538,55 @@ class VectorStoreManager:
         )
         return final_results
 
+    def get_canonical_chunks(
+        self,
+        source_files: Optional[List[str]] = None,
+        section_keywords: Optional[List[str]] = None,
+        exclude_sections: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Directly fetches canonical DocumentChunks by source filename or section keywords
+        from the in-memory BM25 chunk list. Guarantees 100% chunk recall for broad
+        aggregator queries across categories (e.g. all offers, all KYC, all TCS rules).
+        """
+        results: List[Dict[str, Any]] = []
+        chunks_source = self.bm25_index.chunks
+
+        # Fallback if bm25 index chunks are not loaded yet
+        if not chunks_source:
+            try:
+                from app.ingestion import load_and_chunk_all_markdown
+                chunks_source = load_and_chunk_all_markdown()
+            except Exception as e:
+                logger.warning(f"Could not load fallback chunks for get_canonical_chunks: {e}")
+                return []
+
+        clean_sources = [sf.lower().strip() for sf in (source_files or [])]
+        clean_sec_kw = [sk.lower().strip() for sk in (section_keywords or [])]
+        clean_excludes = [ex.lower().strip() for ex in (exclude_sections or [])]
+
+        for c in chunks_source:
+            src = c.source_file.lower()
+            sec = c.section_title.lower()
+
+            if clean_excludes and any(ex in sec for ex in clean_excludes):
+                continue
+
+            file_match = any(sf in src for sf in clean_sources) if clean_sources else True
+            sec_match = any(sk in sec for sk in clean_sec_kw) if clean_sec_kw else True
+
+            if file_match and sec_match:
+                results.append({
+                    "chunk_id": c.chunk_id,
+                    "content": c.text,
+                    "metadata": c.metadata,
+                    "distance": 0.0,
+                    "similarity": 1.0,
+                    "canonical": True
+                })
+
+        return results
+
     def get_stats(self) -> Dict[str, Any]:
         """Returns statistics on the vector store and BM25 index."""
         count = self.collection.count()
