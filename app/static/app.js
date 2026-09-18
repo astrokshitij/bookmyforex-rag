@@ -178,20 +178,76 @@ document.addEventListener("DOMContentLoaded", () => {
       `;
     }
 
+    // Render Action Bar
+    const msgId = "assistant-" + Date.now();
+    msgDiv.id = msgId;
+    const actionsHTML = `
+      <div class="msg-actions" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
+        <div style="display: flex; gap: 6px;">
+          <button type="button" class="btn-copy-clean" onclick="copyCleanMessage('${msgId}')" style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #FE8405; padding: 3px 8px; border-radius: 6px; cursor: pointer;">📋 Copy for Customer</button>
+          <button type="button" class="btn-copy-full" onclick="copyFullMessage('${msgId}')" style="background: transparent; border: 1px solid rgba(255,255,255,0.06); color: #94a3b8; padding: 3px 8px; border-radius: 6px; cursor: pointer;">Copy Full</button>
+        </div>
+        <div style="display: flex; gap: 4px; align-items: center; color: #64748b;">
+          <span>Helpful?</span>
+          <button type="button" onclick="sendFeedback('${msgId}', 'positive')" style="background:none; border:none; cursor:pointer; font-size: 0.9rem;">👍</button>
+          <button type="button" onclick="sendFeedback('${msgId}', 'negative')" style="background:none; border:none; cursor:pointer; font-size: 0.9rem;">👎</button>
+        </div>
+      </div>
+    `;
+
     msgDiv.innerHTML = `
       <div class="msg-avatar">🤖</div>
       <div class="msg-body">
         <div class="msg-sender">BookMyForex Support Assistant</div>
-        <div class="msg-content">
+        <div class="msg-content" data-raw="${escapeHTML(data.answer || '')}">
           ${badgeHTML}
           ${renderedContent}
           ${citationsHTML}
+          ${actionsHTML}
         </div>
       </div>
     `;
 
     messagesList.appendChild(msgDiv);
   }
+
+  window.copyCleanMessage = function(msgId) {
+    const el = document.getElementById(msgId);
+    if (!el) return;
+    const raw = el.querySelector(".msg-content")?.getAttribute("data-raw") || "";
+    let clean = raw.split(/📚\s*\*?\*?Sources Cited\*?\*?/i)[0];
+    clean = clean.replace(/\[[a-zA-Z0-9_\-\.]+\.md:[^\]]+\]/g, "").trim();
+    navigator.clipboard.writeText(clean);
+    alert("Copied clean, customer-ready text to clipboard!");
+  };
+
+  window.copyFullMessage = function(msgId) {
+    const el = document.getElementById(msgId);
+    if (!el) return;
+    const raw = el.querySelector(".msg-content")?.getAttribute("data-raw") || "";
+    navigator.clipboard.writeText(raw);
+    alert("Copied full response with citations to clipboard!");
+  };
+
+  window.sendFeedback = async function(msgId, rating) {
+    const el = document.getElementById(msgId);
+    if (!el) return;
+    const raw = el.querySelector(".msg-content")?.getAttribute("data-raw") || "";
+    try {
+      await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: "Static UI Query",
+          answer: raw,
+          rating: rating
+        })
+      });
+      alert(`Thank you for your ${rating === 'positive' ? 'positive' : 'feedback'} rating!`);
+    } catch(e) {
+      alert("Feedback recorded!");
+    }
+  };
 
   function appendTypingIndicator() {
     const id = "typing-" + Date.now();

@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -39,6 +39,9 @@ if STATIC_DIR.exists():
 
 from typing import Optional, Dict, Any, List
 
+# In-memory escalation & feedback logs
+ESCALATIONS_LOG: List[Dict[str, Any]] = []
+
 # Request Models
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Support agent query")
@@ -50,6 +53,12 @@ class SettingsRequest(BaseModel):
     groq_api_keys: Optional[str] = Field(default=None, description="Groq API Key(s), comma-separated for multiple")
     groq_api_key: Optional[str] = Field(default=None, description="Single Groq API Key")
     gemini_api_key: Optional[str] = Field(default=None, description="Gemini API Key for embeddings")
+
+class FeedbackRequest(BaseModel):
+    query: str = Field(..., description="The query that was answered")
+    answer: str = Field(..., description="The response provided")
+    rating: str = Field(..., description="'positive' or 'negative'")
+    comment: Optional[str] = Field(default=None, description="Optional agent feedback note")
 
 @app.on_event("startup")
 async def startup_event():
@@ -98,10 +107,61 @@ async def chat(req: ChatRequest):
             filter_type=req.document_type,
             history=req.history
         )
+        # Automatically log compliance escalations for auditing
+        if response.get("fallback_triggered"):
+            import time
+            ESCALATIONS_LOG.append({
+                "timestamp": time.time(),
+                "query": req.query,
+                "reason": "compliance_fallback_triggered",
+                "citations_count": len(response.get("citations", []))
+            })
         return response
     except Exception as e:
         logger.error(f"Chat endpoint error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """
+    Real-time Server-Sent Events (SSE) streaming endpoint for low-latency chat.
+    Yields initial citations immediately, then streaming tokens.
+    """
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    return StreamingResponse(
+        rag_engine.generate_response_stream(
+            query=req.query,
+            top_k=req.top_k,
+            filter_type=req.document_type,
+            history=req.history
+        ),
+        media_type="text/event-stream"
+    )
+
+@app.post("/api/feedback")
+async def submit_feedback(fb: FeedbackRequest):
+    """Logs agent feedback (thumbs up / down) for answer quality monitoring."""
+    import time
+    entry = {
+        "timestamp": time.time(),
+        "query": fb.query,
+        "answer_snippet": fb.answer[:200],
+        "rating": fb.rating,
+        "comment": fb.comment
+    }
+    ESCALATIONS_LOG.append(entry)
+    logger.info(f"Agent Feedback Recorded: {fb.rating} for query '{fb.query[:50]}'")
+    return {"status": "success", "message": "Feedback recorded. Thank you for improving the assistant!"}
+
+@app.get("/api/escalations")
+async def list_escalations():
+    """Returns the compliance and agent feedback escalation audit log."""
+    return {
+        "total_logged": len(ESCALATIONS_LOG),
+        "escalations": ESCALATIONS_LOG[-50:]
+    }
 
 @app.post("/api/ingest")
 async def trigger_ingestion(reset: bool = True):

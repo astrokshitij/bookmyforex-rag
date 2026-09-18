@@ -416,29 +416,178 @@ class RAGEngine:
             "cached": False
         }
 
-    def _generate_with_gemini(self, system_instruction: str, prompt_text: str) -> Optional[str]:
-        """Fallback LLM generation using Google Gemini when Groq is unavailable."""
-        if not settings.GEMINI_API_KEY:
-            return None
-        try:
-            from google import genai
-            client = genai.Client(api_key=settings.GEMINI_API_KEY)
-            for attempt in range(3):
+    def clean_for_customer(self, answer_text: str) -> str:
+        """Strips internal citation brackets and compliance headers for clean customer pasting."""
+        import re
+        text = answer_text
+        # Remove markdown citation footers like '📚 Sources Cited...'
+        text = re.split(r'📚\s*\*?\*?Sources Cited\*?\*?', text)[0]
+        # Remove [file.md: Section ...] brackets
+        text = re.sub(r'\[[a-zA-Z0-9_\-\.]+\.md:[^\]]+\]', '', text)
+        # Remove trailing dividers
+        text = text.rstrip(" -\n*#")
+        return text.strip()
+
+    def generate_response_stream(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        filter_type: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None
+    ):
+        """
+        Streaming generator yielding SSE JSON chunks:
+        1. {"type": "init", "citations": [...], "retrieval_count": ...}
+        2. {"type": "token", "delta": "..."}
+        3. {"type": "done", "grounded": bool, "fallback_triggered": bool, "model_used": str, "citations": [...]}
+        """
+        import json
+
+        history_list = history or []
+        history_len = len(history_list)
+
+        # 1. Check Cache
+        cached_resp = self.cache.get(query, filter_type=filter_type, history_len=history_len)
+        if cached_resp:
+            logger.info(f"Stream Cache HIT for query: '{query[:60]}'")
+            yield json.dumps({"type": "init", "citations": cached_resp.get("citations", []), "cached": True}) + "\n"
+            yield json.dumps({"type": "token", "delta": cached_resp.get("answer", "")}) + "\n"
+            yield json.dumps({
+                "type": "done",
+                "grounded": cached_resp.get("grounded", True),
+                "fallback_triggered": cached_resp.get("fallback_triggered", False),
+                "model_used": cached_resp.get("model_used", self.model_name),
+                "citations": cached_resp.get("citations", []),
+                "cached": True
+            }) + "\n"
+            return
+
+        k = top_k or settings.TOP_K
+        filter_dict = {"document_type": filter_type} if filter_type else None
+
+        # 2. Contextualize query
+        search_query = self._contextualize_query(query, history_list)
+
+        # 3. Hybrid Retrieval
+        retrieved_chunks = vector_store.hybrid_query(
+            query_text=search_query,
+            top_k=k,
+            filter_metadata=filter_dict
+        )
+
+        structured_citations = []
+        context_parts = []
+        for item in retrieved_chunks:
+            meta = item.get("metadata", {})
+            content = item.get("content", "")
+            structured_citations.append({
+                "source_file": meta.get("source_file", "Unknown"),
+                "document_title": meta.get("document_title", "Document"),
+                "document_type": meta.get("document_type", "kb"),
+                "section_title": meta.get("section_title", "General"),
+                "last_updated": meta.get("last_updated", ""),
+                "snippet": content[:300] + "..." if len(content) > 300 else content
+            })
+            context_parts.append(
+                f"--- SOURCE: {meta.get('source_file')} | SECTION: {meta.get('section_title')} ---\n{content}\n"
+            )
+
+        # Send initial event with citations immediately (<100ms)
+        yield json.dumps({
+            "type": "init",
+            "citations": structured_citations,
+            "retrieval_count": len(retrieved_chunks)
+        }) + "\n"
+
+        if not retrieved_chunks:
+            fallback = settings.COMPLIANCE_FALLBACK
+            yield json.dumps({"type": "token", "delta": fallback}) + "\n"
+            yield json.dumps({
+                "type": "done",
+                "grounded": False,
+                "fallback_triggered": True,
+                "model_used": self.model_name,
+                "citations": []
+            }) + "\n"
+            return
+
+        formatted_sys_prompt = SYSTEM_PROMPT.format(fallback_statement=settings.COMPLIANCE_FALLBACK)
+        context_str = "\n".join(context_parts)
+        user_content = (
+            f"KNOWLEDGE BASE CONTEXT:\n\n{context_str}\n\n"
+            f"CUSTOMER SUPPORT QUERY: {query}\n\n"
+            f"Using the context above, provide an accurate, grounded answer with source citations. "
+            f"If the context addresses the topic — even through synonyms or related concepts — synthesize "
+            f"a clear answer from it. Only use the compliance fallback if the context contains genuinely "
+            f"no relevant information: \"{settings.COMPLIANCE_FALLBACK}\""
+        )
+
+        messages = [{"role": "system", "content": formatted_sys_prompt}]
+        if history_list:
+            for turn in history_list[-4:]:
+                r = turn.get("role")
+                c = turn.get("content")
+                if r in ("user", "assistant") and c:
+                    messages.append({"role": r, "content": c})
+        messages.append({"role": "user", "content": user_content})
+
+        accumulated_answer = []
+        stream_success = False
+
+        # Attempt streaming via Groq
+        if self._api_keys and self._clients:
+            for _ in range(len(self._api_keys)):
+                key_label, client = self._next_client()
+                if not client:
+                    break
                 try:
-                    resp = client.models.generate_content(
-                        model="gemini-3.6-flash",
-                        contents=prompt_text,
-                        config={"system_instruction": system_instruction, "temperature": 0.2}
+                    stream = client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        temperature=0.2,
+                        max_tokens=2048,
+                        stream=True
                     )
-                    if resp and resp.text:
-                        return resp.text.strip()
-                except Exception as ex:
-                    logger.warning(f"Gemini generation attempt {attempt + 1} failed: {ex}")
-                    time.sleep(1.5 * (attempt + 1))
-            return None
-        except Exception as e:
-            logger.warning(f"Gemini fallback generation failed: {e}")
-            return None
+                    for chunk in stream:
+                        delta = chunk.choices[0].delta.content if chunk.choices and chunk.choices[0].delta else None
+                        if delta:
+                            accumulated_answer.append(delta)
+                            yield json.dumps({"type": "token", "delta": delta}) + "\n"
+                    stream_success = True
+                    break
+                except Exception as e:
+                    logger.warning(f"Groq stream on {key_label} failed: {e}")
+
+        # Fallback to Gemini streaming / generation if Groq didn't complete
+        if not stream_success:
+            gemini_ans = self._generate_with_gemini(formatted_sys_prompt, user_content)
+            if gemini_ans:
+                accumulated_answer = [gemini_ans]
+                yield json.dumps({"type": "token", "delta": gemini_ans}) + "\n"
+                stream_success = True
+
+        full_text = "".join(accumulated_answer).strip() or settings.COMPLIANCE_FALLBACK
+        fallback_triggered = (settings.COMPLIANCE_FALLBACK.lower() in full_text.lower())
+
+        # Cache result
+        result = {
+            "answer": full_text,
+            "grounded": not fallback_triggered,
+            "fallback_triggered": fallback_triggered,
+            "citations": structured_citations,
+            "model_used": self.model_name,
+            "retrieval_count": len(retrieved_chunks),
+            "cached": False
+        }
+        self.cache.set(query, result, filter_type=filter_type, history_len=history_len)
+
+        yield json.dumps({
+            "type": "done",
+            "grounded": not fallback_triggered,
+            "fallback_triggered": fallback_triggered,
+            "model_used": self.model_name,
+            "citations": structured_citations
+        }) + "\n"
 
 # Global singleton instance
 rag_engine = RAGEngine()
