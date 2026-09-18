@@ -168,29 +168,20 @@ def chunk_markdown_preserving_clauses(
             current_h2 = ""
             current_h3 = ""
             current_title = current_h1
-            in_perks_section = any(k in current_h1.lower() for k in ("perk", "partner", "reward", "value-added"))
             current_lines.append(line)
         elif h2_match:
             flush_section()
             current_h2 = h2_match.group(1).strip()
             current_h3 = ""
             current_title = f"{current_h1} > {current_h2}" if current_h1 else current_h2
-            in_perks_section = any(k in current_h2.lower() for k in ("perk", "partner", "reward", "value-added"))
             current_lines.append(line)
         elif h3_match:
             # Check if current block has significant content before switching
-            if len("\n".join(current_lines)) > 350 and has_substantive_content(current_lines):
+            if len("\n".join(current_lines)) > 400 and has_substantive_content(current_lines):
                 flush_section()
             current_h3 = h3_match.group(1).strip()
             breadcrumbs = [b for b in [current_h1, current_h2, current_h3] if b]
             current_title = " > ".join(breadcrumbs)
-            current_lines.append(line)
-        elif in_perks_section and bullet_perk_match and len(bullet_perk_match.group(1).strip()) > 3:
-            # Individual value-added perk bullet point
-            flush_section()
-            perk_name = bullet_perk_match.group(1).strip().rstrip(":")
-            parent = " > ".join([b for b in [current_h1, current_h2, current_h3] if b]) or current_title
-            current_title = f"{parent} > {perk_name}"
             current_lines.append(line)
         else:
             current_lines.append(line)
