@@ -367,6 +367,27 @@ class RAGEngine:
                     logger.warning(f"Groq {key_label} attempt {attempt} failed: {err_str}")
                     time.sleep(1)
 
+        # Try Gemini fallback before failing
+        gemini_answer = self._generate_with_gemini(
+            system_instruction=formatted_sys_prompt,
+            prompt_text=user_content
+        )
+        if gemini_answer:
+            fallback_triggered = (settings.COMPLIANCE_FALLBACK.lower() in gemini_answer.lower())
+            result = {
+                "answer": gemini_answer,
+                "grounded": not fallback_triggered,
+                "fallback_triggered": fallback_triggered,
+                "citations": structured_citations,
+                "model_used": "gemini-3.6-flash (fallback)",
+                "retrieval_count": len(retrieved_chunks),
+                "response_path": "gemini_fallback_success",
+                "keys_available": len(self._api_keys),
+                "cached": False
+            }
+            self.cache.set(query, result, filter_type=filter_type, history_len=history_len)
+            return result
+
         # All attempts exhausted
         logger.error(f"All Groq API attempts failed ({total_attempts} tries): {last_exception}")
         err_msg = str(last_exception) if last_exception else ""
@@ -394,6 +415,30 @@ class RAGEngine:
             "keys_available": len(self._api_keys),
             "cached": False
         }
+
+    def _generate_with_gemini(self, system_instruction: str, prompt_text: str) -> Optional[str]:
+        """Fallback LLM generation using Google Gemini when Groq is unavailable."""
+        if not settings.GEMINI_API_KEY:
+            return None
+        try:
+            from google import genai
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            for attempt in range(3):
+                try:
+                    resp = client.models.generate_content(
+                        model="gemini-3.6-flash",
+                        contents=prompt_text,
+                        config={"system_instruction": system_instruction, "temperature": 0.2}
+                    )
+                    if resp and resp.text:
+                        return resp.text.strip()
+                except Exception as ex:
+                    logger.warning(f"Gemini generation attempt {attempt + 1} failed: {ex}")
+                    time.sleep(1.5 * (attempt + 1))
+            return None
+        except Exception as e:
+            logger.warning(f"Gemini fallback generation failed: {e}")
+            return None
 
 # Global singleton instance
 rag_engine = RAGEngine()

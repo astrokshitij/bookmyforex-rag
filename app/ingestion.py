@@ -56,13 +56,61 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
         return metadata, body
     return {}, content
 
+DOC_TYPE_MAP = {
+    "current-offers.md": "campaign_offers_tcs",
+    "Offers.md": "campaign_offers_tcs",
+    "forex-card.md": "product_guide",
+    "currency-exchange.md": "product_guide",
+    "money-transfer.md": "product_guide",
+    "trade-remittance.md": "product_guide",
+    "currencies-and-rates.md": "product_guide",
+    "fees-and-charges.md": "product_guide",
+    "tcs-and-regulations.md": "operational_sop",
+    "faq-and-support.md": "operational_sop",
+    "terms-and-policies.md": "operational_sop",
+    "company-information.md": "company_overview",
+    "sources-index.md": "company_overview",
+}
+
 def clean_citations_and_markup(text: str) -> str:
     """Cleans citation tags like [cite: 1] while preserving content and structure."""
-    # Keep citations clean or normalize them
     cleaned = re.sub(r'\[cite:\s*\d+\]', '', text)
     # Normalize multiple blank lines to at most two
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
+
+def has_substantive_content(lines: List[str]) -> bool:
+    """Checks if lines contain actual body text beyond just heading lines."""
+    for l in lines:
+        s = l.strip()
+        if s and not s.startswith("#") and not s in ("---", "***", "___"):
+            return True
+    return False
+
+def extract_doc_title_and_date(content: str, file_path: Path, metadata: Dict[str, Any]) -> Tuple[str, str, str]:
+    """Derives document title, document type, and last updated date."""
+    # Title
+    doc_title = metadata.get("document_title")
+    if not doc_title:
+        h1_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+        if h1_match:
+            doc_title = h1_match.group(1).strip()
+        else:
+            doc_title = file_path.stem.replace("-", " ").title()
+
+    # Document Type
+    doc_type = metadata.get("document_type") or DOC_TYPE_MAP.get(file_path.name, "general_kb")
+
+    # Date
+    last_updated = metadata.get("last_updated")
+    if not last_updated:
+        date_match = re.search(r"[Ss]napshot(?:\s+date)?[:\s*]+([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})", content)
+        if date_match:
+            last_updated = date_match.group(1).strip()
+        else:
+            last_updated = "2026-09-18"
+
+    return doc_title, str(doc_type), str(last_updated)
 
 def chunk_markdown_preserving_clauses(
     file_path: Path,
@@ -74,14 +122,9 @@ def chunk_markdown_preserving_clauses(
     ensuring lists, slabs, and policy rules stay intact.
     """
     source_file = file_path.name
-    doc_title = metadata.get("document_title") or file_path.stem.replace("-", " ").title()
-    doc_type = metadata.get("document_type") or "general_kb"
-    last_updated = str(metadata.get("last_updated", "unknown"))
+    doc_title, doc_type, last_updated = extract_doc_title_and_date(body, file_path, metadata)
 
-    # Split body into sections by markdown headings (# or ## or ###) or horizontal rules (---)
-    # We want to identify headings while keeping the heading text
     lines = body.split("\n")
-    
     sections: List[Dict[str, Any]] = []
     current_h1 = ""
     current_h2 = ""
@@ -89,11 +132,9 @@ def chunk_markdown_preserving_clauses(
     current_lines: List[str] = []
     current_title = "Overview"
 
-    for line in lines:
-        stripped = line.strip()
-        
-        # Check if line is a divider
-        if stripped in ("---", "***", "___") and len(current_lines) > 0:
+    def flush_section():
+        nonlocal current_lines
+        if current_lines and has_substantive_content(current_lines):
             section_content = "\n".join(current_lines).strip()
             if section_content:
                 sections.append({
@@ -103,7 +144,14 @@ def chunk_markdown_preserving_clauses(
                     "h3": current_h3,
                     "content": section_content
                 })
-            current_lines = []
+        current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        
+        # Check if line is a divider
+        if stripped in ("---", "***", "___") and len(current_lines) > 0:
+            flush_section()
             continue
 
         # Check for headers
@@ -112,53 +160,22 @@ def chunk_markdown_preserving_clauses(
         h3_match = re.match(r"^###\s+(.+)$", stripped)
 
         if h1_match:
-            # Flush existing
-            if current_lines:
-                section_content = "\n".join(current_lines).strip()
-                if section_content:
-                    sections.append({
-                        "title": current_title,
-                        "h1": current_h1,
-                        "h2": current_h2,
-                        "h3": current_h3,
-                        "content": section_content
-                    })
-                current_lines = []
+            flush_section()
             current_h1 = h1_match.group(1).strip()
             current_h2 = ""
             current_h3 = ""
             current_title = current_h1
             current_lines.append(line)
         elif h2_match:
-            # Flush existing if we already have content under prior h2/h1
-            if current_lines:
-                section_content = "\n".join(current_lines).strip()
-                if section_content:
-                    sections.append({
-                        "title": current_title,
-                        "h1": current_h1,
-                        "h2": current_h2,
-                        "h3": current_h3,
-                        "content": section_content
-                    })
-                current_lines = []
+            flush_section()
             current_h2 = h2_match.group(1).strip()
             current_h3 = ""
             current_title = f"{current_h1} > {current_h2}" if current_h1 else current_h2
             current_lines.append(line)
         elif h3_match:
             # Check if current block has significant content before switching
-            if len("\n".join(current_lines)) > 400:
-                section_content = "\n".join(current_lines).strip()
-                if section_content:
-                    sections.append({
-                        "title": current_title,
-                        "h1": current_h1,
-                        "h2": current_h2,
-                        "h3": current_h3,
-                        "content": section_content
-                    })
-                current_lines = []
+            if len("\n".join(current_lines)) > 400 and has_substantive_content(current_lines):
+                flush_section()
             current_h3 = h3_match.group(1).strip()
             breadcrumbs = [b for b in [current_h1, current_h2, current_h3] if b]
             current_title = " > ".join(breadcrumbs)
@@ -167,16 +184,7 @@ def chunk_markdown_preserving_clauses(
             current_lines.append(line)
 
     # Flush remaining lines
-    if current_lines:
-        section_content = "\n".join(current_lines).strip()
-        if section_content:
-            sections.append({
-                "title": current_title,
-                "h1": current_h1,
-                "h2": current_h2,
-                "h3": current_h3,
-                "content": section_content
-            })
+    flush_section()
 
     chunks: List[DocumentChunk] = []
     chunk_index = 0
@@ -226,17 +234,27 @@ def chunk_markdown_preserving_clauses(
 
 def load_and_chunk_all_markdown(workspace_dir: Optional[Path] = None) -> List[DocumentChunk]:
     """
-    Scans the workspace directory for all *.md files,
-    parses YAML frontmatter, and extracts clause-preserved chunks.
+    Scans the knowledge base directory for all *.md files,
+    parses YAML frontmatter if present, and extracts clause-preserved chunks.
+    Defaults to settings.KB_DIR if it exists, falling back to settings.BASE_DIR.
     """
-    target_dir = workspace_dir or settings.BASE_DIR
+    if workspace_dir is not None:
+        target_dir = workspace_dir
+    elif settings.KB_DIR.exists() and any(settings.KB_DIR.glob("*.md")):
+        target_dir = settings.KB_DIR
+    else:
+        target_dir = settings.BASE_DIR
+
     md_files = list(target_dir.glob("*.md"))
     
     # Filter out README.md or agent-generated documentation if any
-    filtered_files = [f for f in md_files if f.name.lower() not in ("readme.md", "walkthrough.md", "implementation_plan.md")]
+    filtered_files = [
+        f for f in md_files 
+        if f.name.lower() not in ("readme.md", "walkthrough.md", "implementation_plan.md")
+    ]
 
     all_chunks: List[DocumentChunk] = []
-    for md_file in filtered_files:
+    for md_file in sorted(filtered_files):
         try:
             with open(md_file, "r", encoding="utf-8") as f:
                 content = f.read()

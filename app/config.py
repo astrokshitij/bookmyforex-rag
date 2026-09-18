@@ -38,6 +38,7 @@ class Settings:
     # Paths
     BASE_DIR: Path = BASE_DIR
     STATIC_DIR: Path = STATIC_DIR
+    KB_DIR: Path = Path(os.getenv("KB_DIR", str(BASE_DIR / "bookmyforex_internal_kb")))
     # CHROMA_PERSIST_DIR env var allows cloud platforms (e.g. Render) to use /tmp/chroma_db
     CHROMA_DIR: Path = Path(os.getenv("CHROMA_PERSIST_DIR", str(BASE_DIR / "chroma_db")))
     

@@ -5,6 +5,7 @@ ENV/
 
 # ChromaDB vector database (re-indexed on startup)
 chroma_db/
+frontend/
 
 # Secrets & Environment variables
 .env
